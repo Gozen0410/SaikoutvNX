@@ -94,10 +94,14 @@ jobs:
           python3 switch/tools/apply_anilist_home.py
           test -f switch/source/main.cpp
           grep -q 'ANILIST HOME REQUEST' switch/source/main.cpp
+          grep -q 'graphql.anilist.co' switch/source/main.cpp
           if grep -q 'miruro.zenos.my.id/trending' switch/source/main.cpp; then
             echo 'Miruro Home endpoint still present after AniList migration'
             exit 1
           fi
+          echo '--- GENERATED ANILIST HOME REQUEST ---'
+          grep -n -A12 -B4 'ANILIST HOME REQUEST' switch/source/main.cpp
+          echo '--- END GENERATED ANILIST HOME REQUEST ---'
       - name: Apply anime details screen
         run: |
           set -eux
