@@ -1,0 +1,32 @@
+<brls:TabFrame title="Saikou Switch">
+    <brls:Tab label="Home">
+        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingBottom="40" paddingLeft="50" paddingRight="50">
+            <brls:Label width="auto" height="auto" text="Saikou Switch" fontSize="42" horizontalAlign="center" />
+            <brls:Label width="auto" height="auto" text="Your anime, rebuilt for Nintendo Switch" marginTop="20" horizontalAlign="center" />
+            <brls:Label width="auto" height="auto" text="Trending" fontSize="30" />
+            <brls:Label width="auto" height="auto" text="AniList integration coming next" marginTop="20" />
+        </brls:Box>
+    </brls:Tab>
+
+    <brls:Tab label="Search">
+        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
+            <brls:Label width="auto" height="auto" text="Search Anime" fontSize="36" />
+            <brls:Label width="auto" height="auto" text="Network search will be added in the next milestone." marginTop="20" />
+        </brls:Box>
+    </brls:Tab>
+
+    <brls:Tab label="Library">
+        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
+            <brls:Label width="auto" height="auto" text="Library" fontSize="36" />
+            <brls:Label width="auto" height="auto" text="Favorites and watch history will live here." marginTop="20" />
+        </brls:Box>
+    </brls:Tab>
+
+    <brls:Separator />
+    <brls:Tab label="Settings">
+        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
+            <brls:Label width="auto" height="auto" text="Settings" fontSize="36" />
+            <brls:Label width="auto" height="auto" text="Saikou Switch native port" marginTop="20" />
+        </brls:Box>
+    </brls:Tab>
+</brls:TabFrame>

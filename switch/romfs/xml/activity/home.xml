@@ -1,0 +1,5 @@
+<brls:Box width="auto" height="auto" axis="column" paddingTop="28" paddingBottom="32" paddingLeft="50" paddingRight="50">
+    <brls:Label width="auto" height="auto" text="Saikou Switch" fontSize="42" horizontalAlign="center" />
+    <brls:Label width="auto" height="auto" text="Your anime, rebuilt for Nintendo Switch" marginTop="12" horizontalAlign="center" />
+    <brls:Label width="auto" height="auto" text="Trending" fontSize="30" marginTop="18" />
+</brls:Box>
