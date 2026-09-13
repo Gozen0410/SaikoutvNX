@@ -87,6 +87,17 @@ jobs:
           test -f switch/source/main.cpp
           grep -q 'class TrendingCarouselViewport' switch/source/main.cpp
           grep -q 'BUTTON_RIGHT' switch/source/main.cpp
+      - name: Use AniList for Home data
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/apply_anilist_home.py
+          python3 switch/tools/apply_anilist_home.py
+          test -f switch/source/main.cpp
+          grep -q 'ANILIST HOME REQUEST' switch/source/main.cpp
+          if grep -q 'miruro.zenos.my.id/trending' switch/source/main.cpp; then
+            echo 'Miruro Home endpoint still present after AniList migration'
+            exit 1
+          fi
       - name: Apply anime details screen
         run: |
           set -eux
