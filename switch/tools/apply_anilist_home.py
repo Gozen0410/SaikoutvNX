@@ -102,10 +102,10 @@ if len(matches) != 1:
 
 source = source[:matches[0].start()] + replacement + source[matches[0].end():]
 
-# AniList returns the Home items under Page.media. Keep the renderer's
-# existing object-walking logic, but make its collection anchor match the
-# actual GraphQL response.
+# AniList stores the returned anime array in Page.media, not Page.results.
+# The existing renderers walk forward from this collection anchor.
 source = source.replace('response.find("\\\"results\\\"")', 'response.find("\\\"media\\\"")')
+source = source.replace('response.find("\\"results\\"")', 'response.find("\\"media\\"")')
 
 main.write_text(source)
 print("Home API path now uses AniList only and parses Page.media responses")
