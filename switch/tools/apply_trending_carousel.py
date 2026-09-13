@@ -228,10 +228,24 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
         row->addView(card);
     }
 
+    // The Home content is dynamically rebuilt after AniList returns and after
+    // tab reactivation. Restore deterministic focus to the first actual card
+    // so the controller's A action is dispatched to the card, not to the
+    // replaced Home container or a stale view.
+    if (cardCount > 0)
+    {
+        const auto& children = row->getChildren();
+        if (!children.empty())
+        {
+            brls::Application::giveFocus(children[0]);
+            log_stage("TRENDING FIRST CARD FOCUS RESTORED");
+        }
+    }
+
     log_stage("TRENDING UI ATTACHED");
 }
 '''
     source = source[:start] + replacement + source[end:]
 
 path.write_text(source)
-print("Trending carousel patch applied; API code left untouched")
+print("Trending carousel patch applied; first Home card focus restored")
