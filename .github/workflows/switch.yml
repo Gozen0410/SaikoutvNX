@@ -68,10 +68,6 @@ jobs:
           if 'void TabFrame::setTabContent(View* content)' not in s:
               if s.count(marker) != 1: raise SystemExit(f'expected exactly one TabFrame addSeparator definition, found {s.count(marker)}')
               s = s.replace(marker, method + marker, 1)
-          old_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n        view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);\n        newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);\n\n        newContent->setGrow(1.0f);'''
-          new_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n\n        newContent->setGrow(1.0f);'''
-          if old_add not in s: raise SystemExit('Could not locate TabFrame active-content creation block')
-          s = s.replace(old_add, new_add, 1)
           old_creator = '''            this->addTab(label, [viewElement] {\n                return View::createFromXMLElement(viewElement);\n            });'''
           new_creator = '''            tinyxml2::XMLPrinter printer(nullptr, true);\n            viewElement->Accept(&printer);\n            const std::string viewXml = printer.CStr();\n            this->addTab(label, [viewXml] {\n                return View::createFromXMLString(viewXml);\n            });'''
           if old_creator not in s: raise SystemExit('Could not locate original TabFrame XML creator block')
