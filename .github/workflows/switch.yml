@@ -110,6 +110,14 @@ jobs:
           test -f switch/source/main.cpp
           grep -q 'SAIKOU_ANIME_DETAILS_V1' switch/source/main.cpp
           grep -q 'AnimeDetailsActivity' switch/source/main.cpp
+      - name: Instrument anime details activation
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/instrument_anime_details.py
+          python3 switch/tools/instrument_anime_details.py
+          grep -q 'ANIME_DETAILS_DIAGNOSTICS_V1' switch/source/main.cpp
+          grep -q 'DETAILS BEFORE ACTIVITY ALLOCATION' switch/source/main.cpp
+          grep -q 'DETAILS AFTER PUSH ACTIVITY' switch/source/main.cpp
       - name: Apply controller controls
         run: |
           set -eux
