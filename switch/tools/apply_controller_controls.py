@@ -6,7 +6,7 @@ source = path.read_text()
 
 if "g_activeSidebarItem" not in source:
     marker = 'static FILE* g_log = nullptr;\n'
-    addition = marker + 'static brls::View* g_activeSidebarItem = nullptr;\nstatic brls::View* g_homeContentView = nullptr;\nstatic bool g_refreshRequested = false;\n'
+    addition = marker + 'static brls::View* g_activeSidebarItem = nullptr;\nstatic brls::View* g_homeContentView = nullptr;\nstatic bool g_refreshRequested = false;\nstatic bool g_homeActivationSeen = false;\n'
     if source.count(marker) != 1:
         raise SystemExit("Could not locate log global")
     source = source.replace(marker, addition, 1)
@@ -77,8 +77,24 @@ if "SIDEBAR ACTIVE ITEM TRACKING INSTALLED" not in source:
                             brls::SidebarItem* item = dynamic_cast<brls::SidebarItem*>(child);
                             if (item)
                             {
+                                if (!g_homeSidebarItem)
+                                    g_homeSidebarItem = item;
                                 item->getActiveEvent()->subscribe([](brls::View* active) {
+                                    const bool enteringHome = (active == g_homeSidebarItem);
                                     g_activeSidebarItem = active;
+                                    if (enteringHome)
+                                    {
+                                        if (g_homeActivationSeen)
+                                        {
+                                            g_refreshRequested = true;
+                                            log_stage("HOME REACTIVATED - REFRESH REQUESTED");
+                                        }
+                                        else
+                                        {
+                                            g_homeActivationSeen = true;
+                                            log_stage("HOME INITIAL ACTIVATION - NO REFRESH");
+                                        }
+                                    }
                                 });
                             }
                         }
@@ -131,23 +147,7 @@ static void refresh_home_content(brls::TabFrame* tabFrame)
     }
     tabFrame->setTabContent(homeContent);
     g_homeContentView = homeContent;
-    if (g_homeSidebarItem)
-    {
-        brls::View* entry = homeContent->getDefaultFocus();
-        g_homeSidebarItem->setCustomNavigationRoute(brls::FocusDirection::RIGHT, entry ? entry : homeContent);
-    }
     log_stage("AFTER REFRESH TABFRAME CONTENT SET");
-}
-
-static bool focus_is_inside(brls::View* root)
-{
-    brls::View* current = brls::Application::getCurrentFocus();
-    if (!current || !root) return false;
-    for (brls::View* node = current; node; node = node->getParent())
-    {
-        if (node == root) return true;
-    }
-    return false;
 }
 '''
     if source.count(main_marker) != 1:
@@ -160,13 +160,13 @@ if "HOME FOCUS REFRESH CHECK INSTALLED" not in source:
     marker = '    while (brls::Application::mainLoop())\n    {\n        ++loopCount;\n'
     replacement = '''    while (brls::Application::mainLoop())
     {
-        if (g_apiSourceRefreshPending && focus_is_inside(g_homeContentView))
+        if (g_apiSourceRefreshPending && g_activeSidebarItem == g_homeSidebarItem)
         {
             g_apiSourceRefreshPending = false;
             g_refreshRequested = true;
-            log_stage("HOME FOCUS ACTIVE - CONSUMING API SOURCE REFRESH");
+            log_stage("HOME ACTIVE - CONSUMING API SOURCE REFRESH");
         }
-        if (g_refreshRequested && focus_is_inside(g_homeContentView))
+        if (g_refreshRequested && g_activeSidebarItem == g_homeSidebarItem)
         {
             g_refreshRequested = false;
             refresh_home_content(tabFrame);
@@ -179,27 +179,5 @@ if "HOME FOCUS REFRESH CHECK INSTALLED" not in source:
     source = source.replace(marker, replacement, 1)
     source = source.replace('    log_stage("AFTER HOME CONTENT ATTACHMENT PATH");\n', '    g_homeContentView = tabFrame ? tabFrame->getTabContent() : nullptr;\n    log_stage("HOME FOCUS REFRESH CHECK INSTALLED");\n    log_stage("AFTER HOME CONTENT ATTACHMENT PATH");\n', 1)
 
-# The workflow's TabFrame patch currently routes sidebar RIGHT to the content
-# root. Replace that with the content's default focus when available, so Home
-# enters the first real card and Settings enters its API Source button.
-borealis_tab = Path("switch/borealis/library/lib/views/tab_frame.cpp")
-if borealis_tab.exists():
-    tab_source = borealis_tab.read_text()
-    old = '''        newContent->setFocusable(true);\n        view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);\n        newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);'''
-    new = '''        View* entryFocus = newContent->getDefaultFocus();\n        if (entryFocus)
-        {
-            view->setCustomNavigationRoute(FocusDirection::RIGHT, entryFocus);
-            entryFocus->setCustomNavigationRoute(FocusDirection::LEFT, view);
-        }
-        else
-        {
-            newContent->setFocusable(true);
-            view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);
-            newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);
-        }'''
-    if old in tab_source:
-        tab_source = tab_source.replace(old, new, 1)
-    borealis_tab.write_text(tab_source)
-
 path.write_text(source)
-print("Controller now refreshes API changes only while focus is inside active Home content")
+print("Controller now refreshes Home automatically when the Home sidebar tab is reactivated")
