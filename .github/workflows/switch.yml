@@ -64,12 +64,12 @@ jobs:
           if '#include <tinyxml2.h>' not in s:
               s = s.replace('#include <borealis/views/tab_frame.hpp>\n', '#include <borealis/views/tab_frame.hpp>\n#include <tinyxml2.h>\n', 1)
           marker = 'void TabFrame::addSeparator()'
-          method = '''void TabFrame::setTabContent(View* content)\n{\n    if (!content)\n        return;\n    Box* contentView = (Box*)this->contentView;\n    if (!contentView)\n        return;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n\n'''
+          method = '''void TabFrame::setTabContent(View* content)\n{\n    if (!content)\n        return;\n    Box* contentView = (Box*)this->contentView;\n    if (!contentView)\n        return;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    content->setGrow(1.0f);\n\n    // The active Home content is replaced at runtime, so its navigation\n    // routes must be rebuilt here rather than left on the old view tree.\n    View* sidebarView = this->getView("brls/tab_frame/sidebar");\n    Box* sidebarBox = dynamic_cast<Box*>(sidebarView);\n    View* sidebarFocus = sidebarBox ? sidebarBox->getDefaultFocus() : nullptr;\n    if (sidebarFocus)\n    {\n        sidebarFocus->setCustomNavigationRoute(FocusDirection::RIGHT, content);\n        content->setCustomNavigationRoute(FocusDirection::LEFT, sidebarFocus);\n    }\n\n    contentView->addView(content);\n    this->activeTab = content;\n}\n\n'''
           if 'void TabFrame::setTabContent(View* content)' not in s:
               if s.count(marker) != 1: raise SystemExit(f'expected exactly one TabFrame addSeparator definition, found {s.count(marker)}')
               s = s.replace(marker, method + marker, 1)
-          old_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setGrow(1.0f);'''
-          new_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n        view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);\n        newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);\n\n        newContent->setGrow(1.0f);'''
+          old_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n        view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);\n        newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);\n\n        newContent->setGrow(1.0f);'''
+          new_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n\n        newContent->setGrow(1.0f);'''
           if old_add not in s: raise SystemExit('Could not locate TabFrame active-content creation block')
           s = s.replace(old_add, new_add, 1)
           old_creator = '''            this->addTab(label, [viewElement] {\n                return View::createFromXMLElement(viewElement);\n            });'''
@@ -110,14 +110,6 @@ jobs:
           test -f switch/source/main.cpp
           grep -q 'SAIKOU_ANIME_DETAILS_V1' switch/source/main.cpp
           grep -q 'AnimeDetailsActivity' switch/source/main.cpp
-      - name: Instrument anime details activation
-        run: |
-          set -eux
-          python3 -m py_compile switch/tools/instrument_anime_details.py
-          python3 switch/tools/instrument_anime_details.py
-          grep -q 'ANIME_DETAILS_DIAGNOSTICS_V1' switch/source/main.cpp
-          grep -q 'DETAILS BEFORE ACTIVITY ALLOCATION' switch/source/main.cpp
-          grep -q 'DETAILS AFTER PUSH ACTIVITY' switch/source/main.cpp
       - name: Apply controller controls
         run: |
           set -eux
