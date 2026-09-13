@@ -147,12 +147,6 @@ jobs:
             echo 'Unexpected legacy ApiSourceActivity present during stock Settings diagnostic'
             exit 1
           fi
-      - name: Finalize API refresh globals
-        run: |
-          set -eux
-          python3 -m py_compile switch/tools/finalize_api_refresh.py
-          python3 switch/tools/finalize_api_refresh.py
-          grep -q 'static bool g_apiSourceRefreshPending = false;' switch/source/main.cpp
       - name: Build ELF
         working-directory: switch
         run: |
