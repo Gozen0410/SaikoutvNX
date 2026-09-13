@@ -1,9 +1,12 @@
 from pathlib import Path
+import re
 
 main = Path("switch/source/main.cpp")
 source = main.read_text()
 
-# Gogoanime-only incremental integration. Keep provider IDs stable.
+# Keep the existing provider-routing patch generation intact for now. The
+# provider implementations will be reused later for episode/source lookup,
+# but Home must not request streaming-provider data.
 old_url = 'const char* url = "https://miruro.zenos.my.id/trending?per_page=6";'
 if old_url not in source:
     raise SystemExit("Could not locate baseline provider URL")
@@ -44,8 +47,6 @@ source = source.replace(
     1,
 )
 
-# Alternate provider failure is terminal for this request; Miruro keeps its
-# legacy AniList fallback behavior.
 if "ALTERNATE PROVIDER FAILED - NO FALLBACK" not in source:
     marker = '    if (primaryOk)\n    {\n'
     guard = '''    if (!primaryOk && g_apiSource != 0)
@@ -70,8 +71,6 @@ source = source.replace(
     1,
 )
 
-# Convert the simple Gogoanime root array to the existing renderer's expected
-# results array. Generate valid C++ string literals directly.
 if "static std::string normalize_gogoanime_response" not in source:
     marker = 'static std::vector<std::string> extract_trending_titles(const std::string& response)\n'
     helper = '''static std::string normalize_gogoanime_response(const std::string& response)
@@ -130,5 +129,26 @@ new_extract = '''    std::string normalizedResponse = g_apiSource == 2 ? normali
         covers = extract_trending_covers(normalizedResponse);'''
 source = source.replace(old_extract, new_extract, 1)
 
+# Final step for this phase: keep the provider code available for later
+# episode/source integration, but make the Home API probe a local no-op.
+probe_pattern = re.compile(
+    r"static ApiResult run_api_probe\(\)\n\{.*?\n\}\n\nstatic bool download_image",
+    re.S,
+)
+probe_replacement = '''static ApiResult run_api_probe()
+{
+    ApiResult result;
+    log_stage("HOME STREAMING PROVIDERS DETACHED");
+    result.status = "Home provider requests disabled";
+    result.response.clear();
+    return result;
+}
+
+static bool download_image'''
+probe_matches = list(probe_pattern.finditer(source))
+if len(probe_matches) != 1:
+    raise SystemExit(f"Expected exactly one run_api_probe function, found {len(probe_matches)}")
+source = source[:probe_matches[0].start()] + probe_replacement + source[probe_matches[0].end():]
+
 main.write_text(source)
-print("Gogoanime generator emits valid C++ and routes provider id 2")
+print("Home streaming APIs detached; provider code retained for episode/source integration")
