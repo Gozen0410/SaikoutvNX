@@ -1,0 +1,163 @@
+name: Switch Homebrew
+
+on:
+  push:
+    paths:
+      - 'switch/**'
+      - '.github/workflows/switch.yml'
+  workflow_dispatch:
+
+jobs:
+  build-switch:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:20260215
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Switch networking dependency
+        run: |
+          set -eux
+          dkp-pacman -S --needed --noconfirm switch-curl
+          test -f "${DEVKITPRO}/portlibs/switch/lib/libcurl.a"
+          test -f "${DEVKITPRO}/portlibs/switch/include/curl/curl.h"
+      - name: Fetch Borealis
+        run: |
+          set -eux
+          git clone --depth 1 --recurse-submodules https://github.com/Gozen0410/borealis.git switch/borealis
+          cd switch/borealis
+          git fetch --depth 1 origin 7ae6c2826be5f9db5140a093c8fb8832ae356919
+          git checkout 7ae6c2826be5f9db5140a093c8fb8832ae356919
+          cd ../..
+          rm -rf /tmp/saikou-romfs
+          cp -a switch/romfs /tmp/saikou-romfs
+          rm -rf switch/romfs
+          mkdir -p switch/romfs
+          cp -a switch/borealis/resources/. switch/romfs/
+          cp -a /tmp/saikou-romfs/. switch/romfs/
+          rm -rf /tmp/saikou-romfs
+      - name: Patch Borealis
+        working-directory: switch/borealis
+        run: |
+          set -eux
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('library/lib/platforms/switch/swkbd.cpp')
+          lines = p.read_text().splitlines()
+          needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
+          p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
+          p = Path('library/include/borealis/core/activity.hpp')
+          s = p.read_text()
+          old = '    View* getDefaultFocus();'
+          new = '    virtual View* getDefaultFocus();'
+          if s.count(old) != 1: raise SystemExit(f'expected exactly one Activity focus declaration, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          p = Path('library/include/borealis/views/tab_frame.hpp')
+          s = p.read_text()
+          marker = '    void addSeparator();'
+          addition = "    // Attach already-created tab content through TabFrame's own content container.\n    void setTabContent(View* content);\n\n"
+          if 'void setTabContent(View* content);' not in s:
+              if s.count(marker) != 1: raise SystemExit(f'expected exactly one TabFrame separator declaration, found {s.count(marker)}')
+              s = s.replace(marker, addition + marker, 1)
+              p.write_text(s)
+          p = Path('library/lib/views/tab_frame.cpp')
+          s = p.read_text()
+          if '#include <tinyxml2.h>' not in s:
+              s = s.replace('#include <borealis/views/tab_frame.hpp>\n', '#include <borealis/views/tab_frame.hpp>\n#include <tinyxml2.h>\n', 1)
+          marker = 'void TabFrame::addSeparator()'
+          method = '''void TabFrame::setTabContent(View* content)\n{\n    if (!content)\n        return;\n    Box* contentView = (Box*)this->contentView;\n    if (!contentView)\n        return;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n\n'''
+          if 'void TabFrame::setTabContent(View* content)' not in s:
+              if s.count(marker) != 1: raise SystemExit(f'expected exactly one TabFrame addSeparator definition, found {s.count(marker)}')
+              s = s.replace(marker, method + marker, 1)
+          old_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setGrow(1.0f);'''
+          new_add = '''        View* newContent = creator();\n\n        if (!newContent)\n            return;\n\n        newContent->setFocusable(true);\n        view->setCustomNavigationRoute(FocusDirection::RIGHT, newContent);\n        newContent->setCustomNavigationRoute(FocusDirection::LEFT, view);\n\n        newContent->setGrow(1.0f);'''
+          if old_add not in s: raise SystemExit('Could not locate TabFrame active-content creation block')
+          s = s.replace(old_add, new_add, 1)
+          old_creator = '''            this->addTab(label, [viewElement] {\n                return View::createFromXMLElement(viewElement);\n            });'''
+          new_creator = '''            tinyxml2::XMLPrinter printer(nullptr, true);\n            viewElement->Accept(&printer);\n            const std::string viewXml = printer.CStr();\n            this->addTab(label, [viewXml] {\n                return View::createFromXMLString(viewXml);\n            });'''
+          if old_creator not in s: raise SystemExit('Could not locate original TabFrame XML creator block')
+          s = s.replace(old_creator, new_creator, 1)
+          p.write_text(s)
+          PY
+      - name: Apply Saikou trending carousel and controller navigation
+        run: |
+          set -eux
+          sed -i 's/brls::Key::DLEFT/brls::BUTTON_LEFT/g; s/brls::Key::DRIGHT/brls::BUTTON_RIGHT/g; s/brls::Key::A/brls::BUTTON_A/g' switch/tools/apply_trending_carousel.py
+          python3 -m py_compile switch/tools/apply_trending_carousel.py
+          python3 switch/tools/apply_trending_carousel.py
+          test -f switch/source/main.cpp
+          grep -q 'class TrendingCarouselViewport' switch/source/main.cpp
+          grep -q 'BUTTON_RIGHT' switch/source/main.cpp
+      - name: Apply anime details screen
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/apply_anime_details.py
+          python3 switch/tools/apply_anime_details.py
+          test -f switch/source/main.cpp
+          grep -q 'SAIKOU_ANIME_DETAILS_V1' switch/source/main.cpp
+          grep -q 'AnimeDetailsActivity' switch/source/main.cpp
+      - name: Apply controller controls
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/apply_controller_controls.py
+          python3 switch/tools/apply_controller_controls.py
+          grep -q 'g_refreshRequested' switch/source/main.cpp
+          grep -q 'BUTTON_X' switch/source/main.cpp
+          grep -q 'BUTTON_Y' switch/source/main.cpp
+          grep -q 'setGlobalQuit(true)' switch/source/main.cpp
+      - name: Fix Home content persistence
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/fix_home_persistence.py
+          python3 switch/tools/fix_home_persistence.py
+          grep -q 'g_homeSidebarItem' switch/source/main.cpp
+          grep -q 'g_homeContentInstalled' switch/source/main.cpp
+          grep -q 'g_homeContentView' switch/source/main.cpp
+      - name: Add API source selector
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/apply_api_selector.py
+          python3 switch/tools/apply_api_selector.py
+          grep -q 'g_apiSource' switch/source/main.cpp
+          grep -q 'g_apiSourceRefreshPending' switch/source/main.cpp
+      - name: Keep Settings stock for crash isolation
+        run: |
+          set -eux
+          test -f switch/romfs/xml/activity/main.xml
+          if grep -q 'api-source-current' switch/romfs/xml/activity/main.xml; then
+            echo 'Unexpected API selector XML present during stock Settings diagnostic'
+            exit 1
+          fi
+          grep -q '<brls:Tab label="Settings">' switch/romfs/xml/activity/main.xml
+          if grep -q 'ApiSourceActivity' switch/source/main.cpp; then
+            echo 'Unexpected legacy ApiSourceActivity present during stock Settings diagnostic'
+            exit 1
+          fi
+      - name: Finalize API refresh globals
+        run: |
+          set -eux
+          python3 -m py_compile switch/tools/finalize_api_refresh.py
+          python3 switch/tools/finalize_api_refresh.py
+          grep -q 'static bool g_apiSourceRefreshPending = false;' switch/source/main.cpp
+      - name: Build ELF
+        working-directory: switch
+        run: |
+          set -eux
+          test -d romfs
+          test -f romfs/xml/activity/main.xml
+          make clean
+          make -j2 V=1
+          ls -lh saikou_switch.elf saikou_switch.nacp
+      - name: Package NRO
+        working-directory: switch
+        run: |
+          set -eux
+          test -d romfs
+          rm -f saikou_switch.nro
+          "${DEVKITPRO}/tools/bin/elf2nro" saikou_switch.elf saikou_switch.nro --nacp=saikou_switch.nacp --romfsdir="${PWD}/romfs"
+          test -s saikou_switch.nro
+          ls -lh saikou_switch.nro
+      - name: Upload NRO
+        uses: actions/upload-artifact@v4
+        with:
+          name: saikou-switch
+          path: switch/saikou_switch.nro
