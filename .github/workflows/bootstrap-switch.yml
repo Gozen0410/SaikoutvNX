@@ -25,14 +25,10 @@ jobs:
 
           rm -rf switch
           cp -a /tmp/SaikouTV-source/switch ./switch
-
-          mkdir -p .github/workflows
-          cp /tmp/SaikouTV-source/.github/workflows/switch.yml .github/workflows/switch.yml
           cp /tmp/SaikouTV-source/LICENSE.md ./LICENSE.md
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm --ignore-unmatch .github/workflows/bootstrap-switch.yml
-          git add switch .github/workflows/switch.yml LICENSE.md
+          git add switch LICENSE.md
           git commit -m 'Transfer Switch port from SaikouTV'
           git push origin HEAD:main
