@@ -1,13 +1,14 @@
 from pathlib import Path
-import re
 
 main = Path("switch/source/main.cpp")
 source = main.read_text()
 
-pattern = re.compile(
-    r"static ApiResult run_api_probe\(\)\n\{.*?\n\}\n\nstatic bool download_image",
-    re.S,
-)
+start_marker = "static ApiResult run_api_probe()"
+end_marker = "static bool download_image"
+start = source.find(start_marker)
+end = source.find(end_marker, start + len(start_marker))
+if start < 0 or end < 0 or end <= start:
+    raise SystemExit("Could not locate run_api_probe/download_image boundaries")
 
 replacement = r'''static ApiResult run_api_probe()
 {
@@ -94,18 +95,14 @@ replacement = r'''static ApiResult run_api_probe()
     return result;
 }
 
-static bool download_image'''
+'''
 
-matches = list(pattern.finditer(source))
-if len(matches) != 1:
-    raise SystemExit(f"Expected exactly one run_api_probe function, found {len(matches)}")
+source = source[:start] + replacement + source[end:]
 
-source = source[:matches[0].start()] + replacement + source[matches[0].end():]
-
-# AniList stores the returned anime array in Page.media, not Page.results.
-# The existing renderers walk forward from this collection anchor.
-source = source.replace('response.find("\\\"results\\\"")', 'response.find("\\\"media\\\"")')
-source = source.replace('response.find("\\"results\\"")', 'response.find("\\"media\\"")')
+# The AniList response uses Page.media. Keep the existing renderer intact,
+# but make its collection check accept the AniList field instead of Miruro's
+# old results field.
+source = source.replace('response.find("results")', 'response.find("media")')
 
 main.write_text(source)
-print("Home API path now uses AniList only and parses Page.media responses")
+print("Home API path now uses AniList only")
