@@ -50,87 +50,27 @@ jobs:
           needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
           p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
 
-          # Keep TabFrame's tab views alive. The stock Borealis TabFrame destroys
-          # the active view whenever the sidebar changes, which also destroys
-          # runtime Home state. Reusing the same view is enough to preserve
-          # Home's AniList cards and focus state without custom routing.
+          # Keep only the compatibility helper required by the existing Home
+          # implementation. Navigation remains stock Borealis for now.
           p = Path('library/include/borealis/views/tab_frame.hpp')
           s = p.read_text()
-          if 'std::vector<View*> tabs;' not in s:
-              s = s.replace('#include <functional>\n', '#include <functional>\n#include <vector>\n', 1)
-              s = s.replace('    View* activeTab = nullptr;\n', '    View* activeTab = nullptr;\n    std::vector<View*> tabs;\n', 1)
+          declaration = '    void setTabContent(View* content);'
+          if declaration not in s:
+              anchor = '    void addTab(std::string label, TabViewCreator creator);'
+              if anchor not in s:
+                  raise SystemExit('TabFrame addTab declaration not found')
+              s = s.replace(anchor, anchor + '\n' + declaration, 1)
               p.write_text(s)
 
           p = Path('library/lib/views/tab_frame.cpp')
           s = p.read_text()
-          old = '''void TabFrame::addTab(std::string label, TabViewCreator creator)
-{
-    this->sidebar->addItem(label, [this, creator](brls::View* view) {
-        // Only trigger when the sidebar item gains focus
-        if (!view->isFocused())
-            return;
-
-        Box* contentView = (Box*)this->contentView;
-
-        // Remove the existing tab if it exists
-        if (this->activeTab)
-        {
-            contentView->removeView(this->activeTab); // will call willDisappear and delete
-            this->activeTab = nullptr;
-        }
-
-        // Add the new tab
-        View* newContent = creator();
-
-        if (!newContent)
-            return;
-
-        newContent->setGrow(1.0f);
-        contentView->addView(newContent); // addView calls willAppear
-
-        this->activeTab = newContent;
-    });
-}
-'''
-          new = '''void TabFrame::addTab(std::string label, TabViewCreator creator)
-{
-    const size_t tabIndex = this->tabs.size();
-    this->tabs.push_back(nullptr);
-
-    this->sidebar->addItem(label, [this, creator, tabIndex](brls::View* view) {
-        // Only trigger when the sidebar item gains focus.
-        if (!view->isFocused())
-            return;
-
-        Box* contentView = (Box*)this->contentView;
-        if (!contentView)
-            return;
-
-        // Keep every tab view alive. Only its visibility changes, so runtime
-        // state owned by a screen survives sidebar navigation.
-        if (this->activeTab && this->activeTab != this->tabs[tabIndex])
-            this->activeTab->setVisibility(Visibility::GONE);
-
-        View* tab = this->tabs[tabIndex];
-        if (!tab)
-        {
-            tab = creator();
-            if (!tab)
-                return;
-
-            tab->setGrow(1.0f);
-            contentView->addView(tab);
-            this->tabs[tabIndex] = tab;
-        }
-
-        tab->setVisibility(Visibility::VISIBLE);
-        this->activeTab = tab;
-    });
-}
-'''
-          if old not in s:
-              raise SystemExit('Could not locate original TabFrame addTab implementation')
-          p.write_text(s.replace(old, new, 1))
+          if 'void TabFrame::setTabContent(View* content)' not in s:
+              anchor = '\nvoid TabFrame::addSeparator()'
+              if anchor not in s:
+                  raise SystemExit('TabFrame addSeparator implementation not found')
+              implementation = '''\nvoid TabFrame::setTabContent(View* content)\n{\n    Box* contentView = (Box*)this->contentView;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    if (!content)\n        return;\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n'''
+              s = s.replace(anchor, implementation + anchor, 1)
+              p.write_text(s)
           PY
 
       - name: Apply AniList Home data source
