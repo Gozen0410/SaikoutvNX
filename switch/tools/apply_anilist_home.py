@@ -99,9 +99,10 @@ replacement = r'''static ApiResult run_api_probe()
 
 source = source[:start] + replacement + source[end:]
 
-# The AniList response uses Page.media. Keep the existing renderer intact,
-# but make its collection check accept the AniList field instead of Miruro's
-# old results field.
+# The current pinned Borealis Activity API does not expose getDefaultFocus()
+# as a virtual override. Keep HomeActivity minimal and let the framework
+# resolve focus normally.
+source = source.replace("    // Use Borealis' normal focus resolution now that the TabFrame lazy\n    // creator lifetime is fixed. This makes the sidebar receive initial focus.\n    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n", "")
 source = source.replace('response.find("results")', 'response.find("media")')
 
 main.write_text(source)
