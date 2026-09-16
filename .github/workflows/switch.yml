@@ -204,7 +204,10 @@ jobs:
       - name: Verify header navigation foundation
         run: |
           set -eux
+          test -f switch/CMakeLists.txt
           test -f switch/romfs/xml/activity/main.xml
+          grep -q 'set(BOREALIS_LIBRARY' switch/CMakeLists.txt
+          grep -q 'add_subdirectory(${BOREALIS_LIBRARY} borealis)' switch/CMakeLists.txt
           grep -q '<brls:Box id="home/header"' switch/romfs/xml/activity/main.xml
           grep -q 'id="nav/home"' switch/romfs/xml/activity/main.xml
           grep -q 'id="nav/search"' switch/romfs/xml/activity/main.xml
@@ -216,30 +219,25 @@ jobs:
             exit 1
           fi
 
-      - name: Build ELF
+      - name: Configure and build with CMake/Borealis
         working-directory: switch
         run: |
           set -eux
-          test -d romfs
-          test -f romfs/xml/activity/main.xml
-          make clean
-          make -j2 V=1
-          ls -lh saikou_switch.elf saikou_switch.nacp
-
-      - name: Package NRO
-        working-directory: switch
-        run: |
-          set -eux
-          test -d romfs
-          rm -f saikou_switch.nro
-          "${DEVKITPRO}/tools/bin/elf2nro" saikou_switch.elf saikou_switch.nro --nacp=saikou_switch.nacp --romfsdir="${PWD}/romfs"
-          test -s saikou_switch.nro
-          ls -lh saikou_switch.nro
+          rm -rf cmake-build
+          cmake -S . -B cmake-build \
+            -DPLATFORM_SWITCH=ON \
+            -DUSE_DEKO3D=ON \
+            -DUSE_GLFW=OFF \
+            -DUSE_SDL2=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build cmake-build --target SaikouSwitch.nro -j2
+          test -s cmake-build/SaikouSwitch.nro
+          ls -lh cmake-build/SaikouSwitch.nro cmake-build/SaikouSwitch.elf cmake-build/SaikouSwitch.nacp
 
       - name: Upload NRO artifact
         uses: actions/upload-artifact@v4
         with:
           name: SaikouTV-NRO
-          path: switch/saikou_switch.nro
+          path: switch/cmake-build/SaikouSwitch.nro
           if-no-files-found: error
           retention-days: 14
