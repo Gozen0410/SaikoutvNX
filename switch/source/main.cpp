@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 
 static constexpr const char* kAppDir = "sdmc:/switch/SaikouTV";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
@@ -53,9 +54,6 @@ static size_t file_write_callback(char* ptr, size_t size, size_t nmemb, void* us
 class HomeActivity : public brls::Activity
 {
 public:
-    // Use Borealis' normal focus resolution now that the TabFrame lazy
-    // creator lifetime is fixed. This makes the sidebar receive initial focus.
-    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }
     brls::View* createContentView() override
     {
         return brls::View::createFromXMLResource("activity/main.xml");
@@ -68,151 +66,88 @@ struct ApiResult
     std::string response;
 };
 
-static bool api_response_is_valid(CURLcode requestRc, long httpCode, const std::string& response, const char* markerPrefix)
-{
-    char marker[128];
-    if (requestRc == CURLE_OK && httpCode >= 200 && httpCode < 300 && response.find("results") != std::string::npos)
-    {
-        std::snprintf(marker, sizeof(marker), "%s OK HTTP %ld BYTES %zu", markerPrefix, httpCode, response.size());
-        log_stage(marker);
-        return true;
-    }
-
-    std::snprintf(marker, sizeof(marker), "%s FAILED CURL %d HTTP %ld BYTES %zu", markerPrefix, static_cast<int>(requestRc), httpCode, response.size());
-    log_stage(marker);
-    return false;
-}
-
 static ApiResult run_api_probe()
 {
     ApiResult result;
-    log_stage("BEFORE SOCKET INITIALIZE");
+    log_stage("BEFORE ANILIST HOME REQUEST");
+
     Result socketRc = socketInitializeDefault();
     bool socketOwned = false;
     if (R_SUCCEEDED(socketRc))
-    {
         socketOwned = true;
-        log_stage("SOCKET INITIALIZE OK");
-    }
-    else if (socketRc == MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized))
-        log_stage("SOCKET ALREADY INITIALIZED - REUSING EXISTING SOCKET DEVICE");
-    else
+    else if (socketRc != MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized))
     {
-        char marker[128];
-        std::snprintf(marker, sizeof(marker), "SOCKET INITIALIZE FAILED RC 0x%08X LAST 0x%08X", static_cast<unsigned int>(socketRc), static_cast<unsigned int>(socketGetLastResult()));
-        log_stage(marker);
-        SocketInitConfig config = *socketGetDefaultInitConfig();
-        config.bsd_service_type = BsdServiceType_Auto;
-        log_stage("BEFORE SOCKET AUTO INITIALIZE");
-        socketRc = socketInitialize(&config);
-        if (R_SUCCEEDED(socketRc))
-        {
-            socketOwned = true;
-            log_stage("SOCKET AUTO INITIALIZE OK");
-        }
-        else
-        {
-            std::snprintf(marker, sizeof(marker), "SOCKET AUTO INITIALIZE FAILED RC 0x%08X LAST 0x%08X", static_cast<unsigned int>(socketRc), static_cast<unsigned int>(socketGetLastResult()));
-            log_stage(marker);
-            result.status = "Network init failed";
-            return result;
-        }
+        log_stage("ANILIST SOCKET INITIALIZE FAILED");
+        result.status = "Network init failed";
+        return result;
     }
 
     CURLcode globalRc = curl_global_init(CURL_GLOBAL_DEFAULT);
     if (globalRc != CURLE_OK)
     {
-        log_stage("CURL GLOBAL INIT FAILED");
+        log_stage("ANILIST CURL GLOBAL INIT FAILED");
         if (socketOwned) socketExit();
         result.status = "HTTP init failed";
         return result;
     }
-    log_stage("CURL GLOBAL INIT OK");
 
     CURL* curl = curl_easy_init();
     if (!curl)
     {
-        log_stage("CURL EASY INIT FAILED");
+        log_stage("ANILIST CURL EASY INIT FAILED");
         curl_global_cleanup();
         if (socketOwned) socketExit();
         result.status = "HTTP client init failed";
         return result;
     }
 
+    const char* url = "https://graphql.anilist.co";
+    const char* body = "{\"query\":\"query { Page(page: 1, perPage: 6) { pageInfo { hasNextPage } media(type: ANIME, sort: TRENDING_DESC) { id title { english romaji native } coverImage { large } format averageScore } } }\"}";
     std::string response;
-    const char* url = "https://miruro.zenos.my.id/trending?per_page=6";
-    log_stage("BEFORE API REQUEST");
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Accept: application/json");
+
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(std::strlen(body)));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.2");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.4");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, api_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
-    bool primaryOk = false;
-    CURLcode requestRc = CURLE_OK;
+    log_stage("ANILIST HOME REQUEST");
+    CURLcode requestRc = curl_easy_perform(curl);
     long httpCode = 0;
-    for (int attempt = 1; attempt <= 3 && !primaryOk; ++attempt)
-    {
-        char marker[64];
-        std::snprintf(marker, sizeof(marker), "API REQUEST ATTEMPT %d", attempt);
-        log_stage(marker);
-        response.clear();
-        requestRc = curl_easy_perform(curl);
-        httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-        primaryOk = api_response_is_valid(requestRc, httpCode, response, "MIRURO REQUEST");
-    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
-    if (primaryOk)
+    if (requestRc == CURLE_OK && httpCode >= 200 && httpCode < 300 && response.find("\"media\"") != std::string::npos)
     {
-        result.status = "API online - trending data received";
+        char marker[128];
+        std::snprintf(marker, sizeof(marker), "ANILIST HOME REQUEST OK HTTP %ld BYTES %zu", httpCode, response.size());
+        log_stage(marker);
+        result.status = "AniList online - trending data received";
         result.response = response;
     }
     else
     {
-        log_stage("MIRURO FAILED - STARTING ANILIST FALLBACK");
-        curl_easy_reset(curl);
-        response.clear();
-        const char* anilistUrl = "https://graphql.anilist.co";
-        const char* anilistBody = "{\"query\":\"query { Page(page: 1, perPage: 6) { results: media(type: ANIME, sort: TRENDING_DESC) { title { english romaji native } coverImage { large } format averageScore } } }\"}";
-        struct curl_slist* headers = nullptr;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, "Accept: application/json");
-        log_stage("BEFORE ANILIST FALLBACK REQUEST");
-        curl_easy_setopt(curl, CURLOPT_URL, anilistUrl);
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, anilistBody);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(std::strlen(anilistBody)));
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.2");
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, api_write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-        requestRc = curl_easy_perform(curl);
-        httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-        const bool fallbackOk = api_response_is_valid(requestRc, httpCode, response, "ANILIST FALLBACK REQUEST");
-        if (fallbackOk)
-        {
-            result.status = "AniList online - trending data received";
-            result.response = response;
-        }
-        else
-            result.status = "API request failed - UI still running";
-        curl_slist_free_all(headers);
+        char marker[160];
+        std::snprintf(marker, sizeof(marker), "ANILIST HOME REQUEST FAILED CURL %d HTTP %ld BYTES %zu", static_cast<int>(requestRc), httpCode, response.size());
+        log_stage(marker);
+        result.status = "AniList request failed - UI still running";
     }
 
+    curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     curl_global_cleanup();
     if (socketOwned) socketExit();
-    log_stage("API PROBE CLEANUP COMPLETE");
+    log_stage("ANILIST HOME REQUEST CLEANUP COMPLETE");
     return result;
 }
 
@@ -252,7 +187,7 @@ static bool download_image(const std::string& url, const std::string& path)
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.2");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.4");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, file_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
     CURLcode requestRc = curl_easy_perform(curl);
@@ -321,78 +256,93 @@ static std::string json_nested_string_after(const std::string& text, size_t from
     return json_string_after(text, parentPos + parent.size(), childKey, limit);
 }
 
-static std::vector<std::string> extract_trending_titles(const std::string& response)
+static size_t find_balanced_object_end(const std::string& text, size_t objectStart, size_t limit)
 {
-    std::vector<std::string> titles;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return titles;
-    size_t cursor = resultsPos;
-    while (titles.size() < 6)
+    int depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    for (size_t i = objectStart; i < limit; ++i)
     {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t objectStart = response.find('{', titlePos);
-        if (objectStart == std::string::npos) break;
-        size_t objectEnd = response.find('}', objectStart + 1);
-        if (objectEnd == std::string::npos) break;
-        std::string title = json_string_after(response, objectStart, "english", objectEnd);
-        if (title.empty()) title = json_string_after(response, objectStart, "romaji", objectEnd);
-        if (title.empty()) title = json_string_after(response, objectStart, "native", objectEnd);
-        if (!title.empty()) titles.push_back(title);
-        cursor = objectEnd + 1;
-    }
-    return titles;
-}
-
-static std::vector<std::string> extract_trending_details(const std::string& response)
-{
-    std::vector<std::string> details;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return details;
-    size_t cursor = resultsPos;
-    while (details.size() < 6)
-    {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t objectStart = response.find('{', titlePos);
-        if (objectStart == std::string::npos) break;
-        size_t objectEnd = response.find('}', objectStart + 1);
-        if (objectEnd == std::string::npos) break;
-        size_t itemEnd = response.find("\"title\"", objectEnd + 1);
-        if (itemEnd == std::string::npos) itemEnd = response.size();
-        std::string format = json_string_after(response, objectEnd, "format", itemEnd);
-        if (format.empty()) format = json_string_after(response, objectEnd, "type", itemEnd);
-        std::string score = json_value_after(response, objectEnd, "averageScore", itemEnd);
-        std::string detail;
-        if (!format.empty()) detail += format;
-        if (!score.empty() && score != "null")
+        const char c = text[i];
+        if (inString)
         {
-            if (!detail.empty()) detail += "  •  ";
-            detail += "Score: " + score;
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == '"')
+                inString = false;
+            continue;
         }
-        details.push_back(detail);
-        cursor = objectEnd + 1;
+        if (c == '"')
+        {
+            inString = true;
+            continue;
+        }
+        if (c == '{') ++depth;
+        else if (c == '}' && --depth == 0) return i;
     }
-    return details;
+    return std::string::npos;
 }
 
-static std::vector<std::string> extract_trending_covers(const std::string& response)
+struct TrendingCardData
 {
-    std::vector<std::string> covers;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return covers;
-    size_t cursor = resultsPos;
-    while (covers.size() < 6)
+    int id = 0;
+    std::string title;
+    std::string cover;
+    std::string format;
+    std::string score;
+};
+
+static std::vector<TrendingCardData> extract_trending_cards(const std::string& response)
+{
+    std::vector<TrendingCardData> cards;
+    const size_t mediaArrayPos = response.find("\"media\"");
+    if (mediaArrayPos == std::string::npos) return cards;
+
+    size_t cursor = response.find('[', mediaArrayPos);
+    if (cursor == std::string::npos) return cards;
+    ++cursor;
+
+    while (cards.size() < 6 && cursor < response.size())
     {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t itemEnd = response.find("\"title\"", titlePos + 8);
-        if (itemEnd == std::string::npos) itemEnd = response.size();
-        std::string cover = json_nested_string_after(response, titlePos, "coverImage", "large", itemEnd);
-        covers.push_back(cover);
-        cursor = itemEnd;
+        const size_t objectStart = response.find('{', cursor);
+        if (objectStart == std::string::npos) break;
+        const size_t objectEnd = find_balanced_object_end(response, objectStart, response.size());
+        if (objectEnd == std::string::npos) break;
+
+        TrendingCardData card;
+        const std::string idValue = json_value_after(response, objectStart, "id", objectEnd + 1);
+        if (!idValue.empty()) card.id = std::atoi(idValue.c_str());
+
+        const size_t titlePos = response.find("\"title\"", objectStart);
+        if (titlePos != std::string::npos && titlePos < objectEnd)
+        {
+            const size_t titleEnd = find_balanced_object_end(response, response.find('{', titlePos), objectEnd + 1);
+            if (titleEnd != std::string::npos)
+            {
+                card.title = json_string_after(response, titlePos, "english", titleEnd + 1);
+                if (card.title.empty()) card.title = json_string_after(response, titlePos, "romaji", titleEnd + 1);
+                if (card.title.empty()) card.title = json_string_after(response, titlePos, "native", titleEnd + 1);
+            }
+        }
+
+        const size_t coverPos = response.find("\"coverImage\"", objectStart);
+        if (coverPos != std::string::npos && coverPos < objectEnd)
+        {
+            const size_t coverStart = response.find('{', coverPos);
+            const size_t coverEnd = coverStart == std::string::npos ? std::string::npos : find_balanced_object_end(response, coverStart, objectEnd + 1);
+            if (coverEnd != std::string::npos)
+                card.cover = json_string_after(response, coverStart, "large", coverEnd + 1);
+        }
+
+        card.format = json_string_after(response, objectStart, "format", objectEnd + 1);
+        card.score = json_value_after(response, objectStart, "averageScore", objectEnd + 1);
+
+        if (!card.title.empty()) cards.push_back(card);
+        cursor = objectEnd + 1;
     }
-    return covers;
+    return cards;
 }
 
 static std::string compact_title(const std::string& title)
@@ -427,30 +377,32 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
 {
     if (!homeBox || response.empty()) return;
     log_stage("BEFORE TRENDING PARSE");
-    std::vector<std::string> titles = extract_trending_titles(response);
-    std::vector<std::string> details = extract_trending_details(response);
-    std::vector<std::string> covers = extract_trending_covers(response);
-    char marker[64];
-    std::snprintf(marker, sizeof(marker), "TRENDING PARSE FOUND %zu TITLES", titles.size());
+
+    const std::vector<TrendingCardData> cards = extract_trending_cards(response);
+    char marker[96];
+    std::snprintf(marker, sizeof(marker), "TRENDING PARSE FOUND %zu CARDS", cards.size());
     log_stage(marker);
-    if (titles.empty())
+    if (cards.empty())
     {
-        log_stage("TRENDING PARSE FOUND NO TITLES");
+        log_stage("TRENDING PARSE FOUND NO CARDS");
         return;
     }
+
     brls::Label* heading = new brls::Label();
     heading->setText("Trending Now");
     heading->setFontSize(27);
     heading->setMargins(0, 10, 0, 0);
     homeBox->addView(heading);
+
     brls::Box* row = new brls::Box(brls::Axis::ROW);
     row->setGrow(0.0f);
     row->setAlignItems(brls::AlignItems::FLEX_START);
     row->setMargins(0, 7, 0, 0);
     homeBox->addView(row);
-    const size_t cardCount = std::min<size_t>(titles.size(), 6);
-    for (size_t i = 0; i < cardCount; ++i)
+
+    for (size_t i = 0; i < cards.size(); ++i)
     {
+        const auto& data = cards[i];
         brls::Box* card = new brls::Box(brls::Axis::COLUMN);
         card->setWidth(124);
         card->setMargins(2, 3, 2, 0);
@@ -458,14 +410,15 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
         card->setHighlightPadding(5.0f);
         card->setCornerRadius(5.0f);
         card->setFocusSound(brls::SOUND_FOCUS_CHANGE);
+
         bool imageAttached = false;
-        if (i < covers.size() && !covers[i].empty())
+        if (!data.cover.empty())
         {
             char pathBuffer[128];
             std::snprintf(pathBuffer, sizeof(pathBuffer), "%s/trending_%zu.jpg", kCacheDir, i);
             const std::string imagePath = pathBuffer;
             log_stage("BEFORE TRENDING CARD IMAGE DOWNLOAD");
-            if (download_image(covers[i], imagePath))
+            if (download_image(data.cover, imagePath))
             {
                 brls::Image* image = new brls::Image();
                 image->setDimensions(116, 174);
@@ -477,6 +430,7 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
                 log_stage("TRENDING CARD IMAGE ATTACHED");
             }
         }
+
         if (!imageAttached)
         {
             brls::Label* missing = new brls::Label();
@@ -485,26 +439,35 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
             missing->setSingleLine(true);
             card->addView(missing);
         }
+
         brls::Label* title = new brls::Label();
-        title->setText(compact_title(titles[i]));
+        title->setText(compact_title(data.title));
         title->setFontSize(14);
         title->setLineHeight(17);
         title->setMaxWidth(116);
         title->setMargins(2, 4, 2, 0);
         title->setFocusable(false);
         card->addView(title);
-        if (i < details.size() && !details[i].empty())
+
+        std::string detail = data.format;
+        if (!data.score.empty() && data.score != "null")
         {
-            brls::Label* detail = new brls::Label();
-            detail->setText(details[i]);
-            detail->setFontSize(11);
-            detail->setLineHeight(14);
-            detail->setMaxWidth(116);
-            detail->setSingleLine(true);
-            detail->setMargins(2, 1, 2, 0);
-            detail->setFocusable(false);
-            card->addView(detail);
+            if (!detail.empty()) detail += "  •  ";
+            detail += "Score: " + data.score;
         }
+        if (!detail.empty())
+        {
+            brls::Label* detailLabel = new brls::Label();
+            detailLabel->setText(detail);
+            detailLabel->setFontSize(11);
+            detailLabel->setLineHeight(14);
+            detailLabel->setMaxWidth(116);
+            detailLabel->setSingleLine(true);
+            detailLabel->setMargins(2, 1, 2, 0);
+            detailLabel->setFocusable(false);
+            card->addView(detailLabel);
+        }
+
         card->registerAction("Open anime", brls::BUTTON_A, [i](brls::View*) {
             char marker[64];
             std::snprintf(marker, sizeof(marker), "TRENDING CARD SELECTED %zu", i);
@@ -513,6 +476,7 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
         });
         row->addView(card);
     }
+
     log_stage("TRENDING UI ATTACHED");
 }
 
@@ -534,7 +498,7 @@ int main(int argc, char* argv[])
     log_stage("Application::init OK");
     brls::Application::createWindow("Saikou Switch");
     log_stage("Borealis window created");
-    brls::Application::setGlobalQuit(false);
+    brls::Application::setGlobalQuit(true);
     log_stage("BEFORE HomeActivity construction");
     HomeActivity* activity = new HomeActivity();
     log_stage("AFTER HomeActivity construction");
@@ -558,66 +522,59 @@ int main(int argc, char* argv[])
             std::fseek(homeFile, 0, SEEK_END);
             long fileSize = std::ftell(homeFile);
             std::fseek(homeFile, 0, SEEK_SET);
-            if (fileSize <= 0 || fileSize > 1024 * 1024)
+            if (fileSize > 0 && fileSize < 128 * 1024)
             {
-                std::fclose(homeFile);
-                log_stage("HOME RESOURCE PREFLIGHT INVALID SIZE");
-            }
-            else
-            {
-                std::string xml(static_cast<size_t>(fileSize), '\0');
-                size_t readSize = std::fread(xml.data(), 1, xml.size(), homeFile);
-                std::fclose(homeFile);
-                if (readSize != xml.size())
-                    log_stage("HOME RESOURCE PREFLIGHT READ FAILED");
-                else
+                std::string homeXml(static_cast<size_t>(fileSize), '\0');
+                const size_t bytesRead = std::fread(homeXml.data(), 1, homeXml.size(), homeFile);
+                if (bytesRead == homeXml.size())
                 {
                     log_stage("HOME RESOURCE PREFLIGHT READ OK");
                     log_stage("BEFORE HOME XML STRING INFLATION");
-                    brls::View* homeContent = brls::View::createFromXMLString(xml);
-                    log_stage(homeContent ? "HOME XML STRING RETURNED VIEW" : "HOME XML STRING RETURNED NULL");
-                    if (homeContent)
+                    brls::View* homeView = brls::View::createFromXMLString(homeXml);
+                    if (homeView)
                     {
-                        log_stage("BEFORE API PROBE");
+                        log_stage("HOME XML STRING RETURNED VIEW");
+                        brls::Box* homeBox = dynamic_cast<brls::Box*>(homeView);
                         ApiResult api = run_api_probe();
-                        log_stage("AFTER API PROBE");
-                        brls::Box* homeBox = dynamic_cast<brls::Box*>(homeContent);
                         if (homeBox)
                         {
-                            // Keep the whole content panel as a valid fallback focus target
-                            // when the network is unavailable and no cards exist.
-                            homeBox->setFocusable(true);
                             brls::Label* status = new brls::Label();
                             status->setText(api.status);
-                            status->setFontSize(16);
+                            status->setFontSize(14);
+                            status->setMargins(0, 6, 0, 0);
                             homeBox->addView(status);
                             log_stage("API STATUS LABEL ATTACHED");
-                            if (!api.response.empty()) render_trending(homeBox, api.response);
+                            if (!api.response.empty())
+                                render_trending(homeBox, api.response);
                         }
-                        else
-                            log_stage("HOME ROOT IS NOT BOX");
                         log_stage("BEFORE PUBLIC TABFRAME CONTENT SET");
-                        tabFrame->setTabContent(homeContent);
+                        tabFrame->setTabContent(homeView);
                         log_stage("AFTER PUBLIC TABFRAME CONTENT SET");
-                        homeContent = nullptr;
+                        log_stage("AFTER HOME CONTENT ATTACHMENT PATH");
                     }
+                    else
+                        log_stage("HOME XML STRING RETURNED NULL");
                 }
+                else
+                    log_stage("HOME RESOURCE PREFLIGHT READ FAILED");
             }
+            else
+                log_stage("HOME RESOURCE PREFLIGHT SIZE INVALID");
+            std::fclose(homeFile);
         }
     }
-    log_stage("AFTER HOME CONTENT ATTACHMENT PATH");
-    int loopCount = 0;
+    int loops = 0;
     while (brls::Application::mainLoop())
     {
-        ++loopCount;
-        if (loopCount <= 5)
+        ++loops;
+        if (loops <= 5)
         {
             char marker[64];
-            std::snprintf(marker, sizeof(marker), "mainLoop returned true #%d", loopCount);
+            std::snprintf(marker, sizeof(marker), "mainLoop returned true #%d", loops);
             log_stage(marker);
         }
     }
     log_stage("mainLoop returned false");
-    romfsExit();
+    brls::Application::exit();
     return EXIT_SUCCESS;
 }
