@@ -50,8 +50,6 @@ jobs:
           needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
           p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
 
-          # Keep only the compatibility helper required by the existing Home
-          # implementation. Navigation remains stock Borealis for now.
           p = Path('library/include/borealis/views/tab_frame.hpp')
           s = p.read_text()
           declaration = '    void setTabContent(View* content);'
@@ -86,6 +84,23 @@ jobs:
             exit 1
           fi
 
+      - name: Restore normal + exit behavior
+        run: |
+          set -eux
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('switch/source/main.cpp')
+          s = p.read_text()
+          old = 'brls::Application::setGlobalQuit(false);'
+          new = 'brls::Application::setGlobalQuit(true);'
+          if old in s:
+              s = s.replace(old, new, 1)
+          if new not in s:
+              raise SystemExit('Could not restore global + exit behavior')
+          p.write_text(s)
+          PY
+          grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
+
       - name: Verify clean navigation foundation
         run: |
           set -eux
@@ -118,9 +133,3 @@ jobs:
           "${DEVKITPRO}/tools/bin/elf2nro" saikou_switch.elf saikou_switch.nro --nacp=saikou_switch.nacp --romfsdir="${PWD}/romfs"
           test -s saikou_switch.nro
           ls -lh saikou_switch.nro
-
-      - name: Upload NRO
-        uses: actions/upload-artifact@v4
-        with:
-          name: saikou-switch
-          path: switch/saikou_switch.nro
