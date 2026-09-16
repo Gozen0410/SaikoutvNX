@@ -20,11 +20,9 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     // Keep the card close to AniList's portrait cover ratio (~2:3).
     card->setWidth(170);
     card->setHeight(305);
-    // Give the complete card content a small vertical inset so the image,
-    // title, and metadata sit comfortably inside the focus frame.
+    card->setMargins(4, 6, 4, 0);
     card->setPaddingTop(4.0f);
     card->setPaddingBottom(4.0f);
-    card->setMargins(4, 6, 4, 0);
     card->setFocusable(true);
     // Keep the focus frame inside the card bounds so it does not intrude into
     // neighboring cards or their text.
@@ -34,16 +32,26 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        brls::Image* image = new brls::Image();
-        image->setDimensions(162, 243);
-        // The card is 170px wide while the image is 162px wide. Give the image
-        // equal horizontal margins so it is centered without changing the
-        // alignment of the title/meta labels below it.
-        image->setMargins(0, 4, 0, 4);
+        // Use an explicit image view size and disable flex shrinking so the
+        // loaded texture's intrinsic dimensions cannot change the card layout.
+        auto* imageFrame = new brls::Box(brls::Axis::COLUMN);
+        imageFrame->setWidth(170.0f);
+        imageFrame->setHeight(243.0f);
+        imageFrame->setGrow(0.0f);
+        imageFrame->setShrink(0.0f);
+        imageFrame->setAlignItems(brls::AlignItems::CENTER);
+        imageFrame->setJustifyContent(brls::JustifyContent::CENTER);
+        imageFrame->setFocusable(false);
+
+        auto* image = new brls::Image();
+        image->setDimensions(162.0f, 243.0f);
+        image->setShrink(0.0f);
         image->setScalingType(brls::ImageScalingType::CROP);
+        image->setImageAlign(brls::ImageAlignment::CENTER);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
-        card->addView(image);
+        imageFrame->addView(image);
+        card->addView(imageFrame);
     }
     else
     {
