@@ -38,35 +38,15 @@ jobs:
           cp -a /tmp/saikou-romfs/. switch/romfs/
           rm -rf /tmp/saikou-romfs
 
-      - name: Apply minimal Borealis compatibility patch
+      - name: Verify Borealis compatibility
         working-directory: switch/borealis
         run: |
           set -eux
-          python3 - <<'PY'
-          from pathlib import Path
-
-          # Saikou no longer uses TabFrame for Home, but keep this tiny
-          # compatibility hook available for any remaining legacy code.
-          p = Path('library/include/borealis/views/tab_frame.hpp')
-          s = p.read_text()
-          declaration = '    void setTabContent(View* content);'
-          if declaration not in s:
-              anchor = '    void addTab(std::string label, TabViewCreator creator);'
-              if anchor not in s:
-                  raise SystemExit('TabFrame addTab declaration not found')
-              s = s.replace(anchor, anchor + '\n' + declaration, 1)
-              p.write_text(s)
-
-          p = Path('library/lib/views/tab_frame.cpp')
-          s = p.read_text()
-          if 'void TabFrame::setTabContent(View* content)' not in s:
-              anchor = '\nvoid TabFrame::addSeparator()'
-              if anchor not in s:
-                  raise SystemExit('TabFrame addSeparator implementation not found')
-              implementation = '''\nvoid TabFrame::setTabContent(View* content)\n{\n    Box* contentView = (Box*)this->contentView;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    if (!content)\n        return;\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n'''
-              s = s.replace(anchor, implementation + anchor, 1)
-              p.write_text(s)
-          PY
+          test -f library/CMakeLists.txt
+          test -f library/include/borealis/core/logger.hpp
+          grep -q 'LOG_DEBUG' library/include/borealis/core/logger.hpp
+          test -f library/include/borealis/views/tab_frame.hpp
+          ! grep -q 'setTabContent' library/include/borealis/views/tab_frame.hpp
 
       - name: Apply AniList Home data source
         run: |
@@ -101,7 +81,7 @@ jobs:
               ensure_app_dirs();
               g_log = std::fopen(kLogPath, "w");
               log_stage("entered main");
-              brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
+              brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
               log_stage("logger configured");
 
               Result romfsRc = romfsInit();
