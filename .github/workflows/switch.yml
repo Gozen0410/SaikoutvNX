@@ -15,12 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Switch networking dependency
+      - name: Install Switch cover-image dependency
         run: |
           set -eux
-          dkp-pacman -S --needed --noconfirm switch-curl
+          dkp-pacman -S --needed --noconfirm switch-curl switch-libjpeg-turbo
           test -f "${DEVKITPRO}/portlibs/switch/lib/libcurl.a"
+          test -f "${DEVKITPRO}/portlibs/switch/lib/libjpeg.a"
           test -f "${DEVKITPRO}/portlibs/switch/include/curl/curl.h"
+          test -f "${DEVKITPRO}/portlibs/switch/include/jpeglib.h"
 
       - name: Fetch Borealis
         run: |
@@ -68,7 +70,10 @@ jobs:
           test -f switch/source/json.cpp
           test -f switch/source/home.cpp
           test -f switch/source/image_cache.cpp
+          test -f switch/source/cover_orientation.cpp
+          test -f switch/source/cover_orientation.hpp
           grep -q 'CPPFILES := $(filter-out main.cpp' switch/Makefile
+          grep -q -- '-ljpeg' switch/Makefile
           if grep -R 'miruro.zenos.my.id/trending' switch/source/anilist.cpp switch/source/home.cpp switch/source/app.cpp; then
             echo 'Miruro leaked into the AniList/Home layer'
             exit 1
