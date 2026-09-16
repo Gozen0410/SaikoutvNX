@@ -31,7 +31,14 @@ LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 LIBS := -lcurl -lz -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 
+# Older Borealis releases provided library/borealis.mk. The newer 5f08b286
+# revision used by NX Torrent Player is CMake-first and no longer ships it, so
+# fall back to our Make-compatible bridge only when the native file is absent.
+ifneq ($(wildcard $(TOPDIR)/$(BOREALIS_PATH)/library/borealis.mk),)
 include $(TOPDIR)/$(BOREALIS_PATH)/library/borealis.mk
+else
+include $(TOPDIR)/borealis_5f08.mk
+endif
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
