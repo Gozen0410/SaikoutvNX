@@ -1,5 +1,5 @@
 #include "home.hpp"
-#include "cover_orientation.hpp"
+#include "image_cache.hpp"
 
 #include <borealis/views/image.hpp>
 #include <borealis/views/label.hpp>
@@ -29,13 +29,16 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     card->setHighlightPadding(0.0f);
     card->setCornerRadius(6.0f);
 
-    const std::string imagePath = ensureAnimeCoverOrientationNormalized(anime);
+    const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        // Keep the image renderer raw for this checkpoint. The only image-side
-        // transformation is normalization of any JPEG EXIF orientation metadata
-        // before Borealis sees the file.
+        // Controlled image-layout test: fixed poster slot + FIT, with no custom
+        // Borealis changes, EXIF normalization, frame wrapper, or CROP/FILL.
+        // FIT preserves the source aspect ratio inside the exact 162x243 slot.
         auto* image = new brls::Image();
+        image->setDimensions(162.0f, 243.0f);
+        image->setScalingType(brls::ImageScalingType::FIT);
+        image->setShrink(0.0f);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
         card->addView(image);
