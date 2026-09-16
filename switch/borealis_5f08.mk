@@ -10,7 +10,8 @@ LIBS := -ldeko3d -lm $(LIBS)
 include $(TOPDIR)/$(BOREALIS_COMPAT_ROOT)/lib/extern/switch-libpulsar/deps.mk
 
 # The newer Borealis layout keeps its implementation under library/lib.
-# Feed every relevant source directory (recursively) to libnx's make rules.
+# Keep these paths relative to the top-level Switch directory so the parent
+# Makefile can export an absolute VPATH for the recursive build directory.
 BOREALIS_SOURCE_ROOTS := \
 	lib/core \
 	lib/views \
@@ -31,7 +32,7 @@ BOREALIS_SOURCE_ROOTS := \
 	lib/extern/switch-libpulsar/src/bfwsd \
 	lib/extern/switch-libpulsar/src/player
 
-BOREALIS_SOURCE_DIRS := $(foreach root,$(BOREALIS_SOURCE_ROOTS),$(shell find $(TOPDIR)/$(BOREALIS_COMPAT_ROOT)/$(root) -type d 2>/dev/null))
+BOREALIS_SOURCE_DIRS := $(foreach root,$(BOREALIS_SOURCE_ROOTS),$(shell find $(BOREALIS_COMPAT_ROOT)/$(root) -type d 2>/dev/null))
 SOURCES := $(SOURCES) $(BOREALIS_SOURCE_DIRS)
 
 INCLUDES := $(INCLUDES) \
