@@ -27,8 +27,8 @@ jobs:
           set -eux
           git clone --depth 1 --recurse-submodules https://github.com/Gozen0410/borealis.git switch/borealis
           cd switch/borealis
-          git fetch --depth 1 origin 7ae6c2826be5f9db5140a093c8fb8832ae356919
-          git checkout 7ae6c2826be5f9db5140a093c8fb8832ae356919
+          git fetch --depth 1 origin 5f08b286f3df737f3321d2247a6fe633fcead03c
+          git checkout 5f08b286f3df737f3321d2247a6fe633fcead03c
           cd ../..
           rm -rf /tmp/saikou-romfs
           cp -a switch/romfs /tmp/saikou-romfs
@@ -216,7 +216,7 @@ jobs:
           p = Path('switch/source/main.cpp')
           s = p.read_text()
 
-          # Borealis revision 7ae6c28 exposes Activity::getDefaultFocus() as a
+          # Borealis 5f08b286 still exposes Activity::getDefaultFocus() as a
           # non-virtual helper, so HomeActivity must not override it.
           stale = '    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n'
           if stale in s:
