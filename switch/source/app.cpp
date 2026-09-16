@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace
 {
@@ -31,6 +32,53 @@ static void logStage(const char* message)
         return;
     std::fprintf(g_log, "[Saikou] %s\n", message);
     std::fflush(g_log);
+}
+
+static void logResult(const char* prefix, Result rc)
+{
+    char marker[128];
+    std::snprintf(marker, sizeof(marker), "%s RC=0x%08X MODULE=%u DESCRIPTION=%u",
+                  prefix,
+                  static_cast<unsigned int>(rc),
+                  static_cast<unsigned int>(R_MODULE(rc)),
+                  static_cast<unsigned int>(R_DESCRIPTION(rc)));
+    logStage(marker);
+}
+
+static void logFileProbe(const char* path)
+{
+    FILE* file = std::fopen(path, "rb");
+    if (!file)
+    {
+        logStage("ROMFS PREFLIGHT OPEN FAILED");
+        return;
+    }
+
+    logStage("ROMFS PREFLIGHT OPEN OK");
+    if (std::fseek(file, 0, SEEK_END) != 0)
+    {
+        std::fclose(file);
+        logStage("ROMFS PREFLIGHT SEEK FAILED");
+        return;
+    }
+
+    long size = std::ftell(file);
+    std::rewind(file);
+    char marker[128];
+    std::snprintf(marker, sizeof(marker), "ROMFS PREFLIGHT SIZE %ld", size);
+    logStage(marker);
+
+    if (size <= 0 || size > 1024 * 1024)
+    {
+        std::fclose(file);
+        logStage("ROMFS PREFLIGHT INVALID SIZE");
+        return;
+    }
+
+    char firstByte = '\0';
+    size_t read = std::fread(&firstByte, 1, 1, file);
+    std::fclose(file);
+    logStage(read == 1 ? "ROMFS PREFLIGHT READ OK" : "ROMFS PREFLIGHT READ FAILED");
 }
 
 static const AnimeList& getTrending()
@@ -87,7 +135,6 @@ int main(int argc, char* argv[])
     (void)argc;
     (void)argv;
 
-    // Keep the exact platform/bootstrap ordering proven by the working #50 build.
     fsdevMountSdmc();
     ensureAppDirs();
 
@@ -97,36 +144,51 @@ int main(int argc, char* argv[])
     brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
     logStage("logger configured");
 
+    logStage("BEFORE ROMFS INIT");
     Result romfsRc = romfsInit();
-    logStage(R_SUCCEEDED(romfsRc) ? "romfsInit OK" : "romfsInit FAILED");
+    logResult("ROMFS INIT RESULT", romfsRc);
+    logStage(R_SUCCEEDED(romfsRc) ? "ROMFS INIT OK" : "ROMFS INIT FAILED");
 
-    // Borealis performs its own initialization and resource access after this point.
-    logStage("closing Saikou log before Borealis init");
-    if (g_log)
+    // Keep the Saikou log open throughout Borealis initialization so a crash keeps
+    // a continuous application-side timeline in addition to Borealis/Switch logs.
+    logStage("BEFORE ROMFS PREFLIGHT");
+    logFileProbe("romfs:/xml/activity/main.xml");
+    logStage("AFTER ROMFS PREFLIGHT");
+
+    logStage("BEFORE APPLICATION INIT");
+    const bool appInitOk = brls::Application::init();
+    logStage(appInitOk ? "APPLICATION INIT OK" : "APPLICATION INIT FAILED");
+    if (!appInitOk)
     {
-        std::fclose(g_log);
-        g_log = nullptr;
+        logStage("EXITING AFTER APPLICATION INIT FAILURE");
+        if (g_log)
+        {
+            std::fclose(g_log);
+            g_log = nullptr;
+        }
+        return EXIT_FAILURE;
     }
 
-    if (!brls::Application::init())
-        return EXIT_FAILURE;
-    logStage("Application::init OK");
-
+    logStage("BEFORE CREATE WINDOW");
     brls::Application::createWindow("Saikou Switch");
-    logStage("Borealis window created");
+    logStage("AFTER CREATE WINDOW");
 
-    // Preserve the working baseline's global-quit behavior until we have a dedicated
-    // lifecycle test for the layered entry point.
     brls::Application::setGlobalQuit(false);
 
-    brls::Application::pushActivity(new RootActivity());
-    logStage("RootActivity pushed");
+    logStage("BEFORE ROOT ACTIVITY CONSTRUCTION");
+    RootActivity* root = new RootActivity();
+    logStage("AFTER ROOT ACTIVITY CONSTRUCTION");
 
+    logStage("BEFORE PUSH ROOT ACTIVITY");
+    brls::Application::pushActivity(root);
+    logStage("AFTER PUSH ROOT ACTIVITY");
+
+    logStage("ENTERING MAIN LOOP");
     while (brls::Application::mainLoop())
     {
     }
 
-    logStage("mainLoop returned false");
+    logStage("MAIN LOOP RETURNED FALSE");
     if (g_log)
     {
         std::fclose(g_log);
