@@ -62,7 +62,7 @@ replacement = r'''static ApiResult run_api_probe()
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.3");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouSwitch/0.4");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, api_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
@@ -98,10 +98,6 @@ replacement = r'''static ApiResult run_api_probe()
 '''
 
 source = source[:start] + replacement + source[end:]
-
-# The current pinned Borealis Activity API does not expose getDefaultFocus()
-# as a virtual override. Keep HomeActivity minimal and let the framework
-# resolve focus normally.
 source = source.replace("    // Use Borealis' normal focus resolution now that the TabFrame lazy\n    // creator lifetime is fixed. This makes the sidebar receive initial focus.\n    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n", "")
 source = source.replace('response.find("results")', 'response.find("media")')
 
