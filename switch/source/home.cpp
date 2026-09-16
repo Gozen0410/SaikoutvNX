@@ -32,6 +32,10 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     {
         brls::Image* image = new brls::Image();
         image->setDimensions(162, 243);
+        // The card is 170px wide while the image is 162px wide. Give the image
+        // equal horizontal margins so it is centered without changing the
+        // alignment of the title/meta labels below it.
+        image->setMargins(0, 4, 0, 4);
         image->setScalingType(brls::ImageScalingType::CROP);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
