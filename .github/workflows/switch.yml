@@ -69,7 +69,7 @@ jobs:
               anchor = '    View* activeTab = nullptr;'
               if anchor not in s:
                   raise SystemExit('TabFrame activeTab member not found')
-              s = s.replace(anchor, anchor + '\n    ' + member.strip(), 1)
+              s = s.replace(anchor, anchor + '\n' + member, 1)
           p.write_text(s)
 
           p = Path('library/lib/views/tab_frame.cpp')
@@ -86,7 +86,7 @@ jobs:
               anchor = '\nvoid TabFrame::addSeparator()'
               if anchor not in s:
                   raise SystemExit('TabFrame addSeparator implementation not found')
-              implementation = '''\nvoid TabFrame::setTabContentFactory(std::function<View*(const std::string&, TabViewCreator)> factory)\n{\n    this->tabContentFactory = std::move(factory);\n}\n'''
+              implementation = '''\nvoid TabFrame::setTabContentFactory(std::function<View*(const std::string&, TabViewCreator)> factory)\n{\n    this->tabContentFactory = factory;\n}\n'''
               s = s.replace(anchor, implementation + anchor, 1)
           if 'void TabFrame::setTabContent(View* content)' not in s:
               anchor = '\nvoid TabFrame::addSeparator()'
