@@ -38,101 +38,51 @@ jobs:
           cp -a /tmp/saikou-romfs/. switch/romfs/
           rm -rf /tmp/saikou-romfs
 
-      - name: Apply minimal Borealis compatibility patch
-        working-directory: switch/borealis
+      - name: Apply committed Borealis compatibility patch
         run: |
           set -eux
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('library/lib/platforms/switch/swkbd.cpp')
-          lines = p.read_text().splitlines()
-          needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
-          p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
-
-          p = Path('library/include/borealis/views/tab_frame.hpp')
-          s = p.read_text()
-          declaration = '    void setTabContent(View* content);'
-          if declaration not in s:
-              anchor = '    void addTab(std::string label, TabViewCreator creator);'
-              if anchor not in s:
-                  raise SystemExit('TabFrame addTab declaration not found')
-              s = s.replace(anchor, anchor + '\n' + declaration, 1)
-              p.write_text(s)
-
-          p = Path('library/lib/views/tab_frame.cpp')
-          s = p.read_text()
-          if 'void TabFrame::setTabContent(View* content)' not in s:
-              anchor = '\nvoid TabFrame::addSeparator()'
-              if anchor not in s:
-                  raise SystemExit('TabFrame addSeparator implementation not found')
-              implementation = '''\nvoid TabFrame::setTabContent(View* content)\n{\n    Box* contentView = (Box*)this->contentView;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    if (!content)\n        return;\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n'''
-              s = s.replace(anchor, implementation + anchor, 1)
-              p.write_text(s)
-          PY
-
-      - name: Apply AniList Home data source
-        run: |
-          set -eux
-          python3 -m py_compile switch/tools/apply_anilist_home.py
-          python3 switch/tools/apply_anilist_home.py
-          test -f switch/source/main.cpp
-          grep -q 'ANILIST HOME REQUEST' switch/source/main.cpp
-          grep -q 'graphql.anilist.co' switch/source/main.cpp
-          if grep -q 'miruro.zenos.my.id/trending' switch/source/main.cpp; then
-            echo 'Unexpected Miruro Home endpoint after clean AniList migration'
+          git -C switch/borealis apply switch/patches/borealis-switch-compat.patch
+          grep -q 'swkbdConfigSetInitialText' switch/borealis/library/lib/platforms/switch/swkbd.cpp
+          if grep -q 'swkbdConfigSetStringLenMaxExt(&config, 1);' switch/borealis/library/lib/platforms/switch/swkbd.cpp; then
+            echo 'Borealis compatibility patch was not applied'
             exit 1
           fi
 
-      - name: Restore normal + exit behavior
+      - name: Test AniList parser on host
         run: |
           set -eux
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('switch/source/main.cpp')
-          s = p.read_text()
-          old = 'brls::Application::setGlobalQuit(false);'
-          new = 'brls::Application::setGlobalQuit(true);'
-          if old in s:
-              s = s.replace(old, new, 1)
-          if new not in s:
-              raise SystemExit('Could not restore global + exit behavior')
-          p.write_text(s)
-          PY
-          grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -Iswitch/source \
+            switch/source/json.cpp \
+            switch/source/anilist_parser.cpp \
+            switch/tools/test_anilist_parser.cpp \
+            -o /tmp/test_anilist_parser
+          /tmp/test_anilist_parser
 
-      - name: Verify clean navigation foundation
+      - name: Verify layered source tree
         run: |
           set -eux
-          test -f switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Home">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Search">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Library">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Settings">' switch/romfs/xml/activity/main.xml
-          if grep -q 'AnimeDetailsActivity\|ApiSourceActivity\|g_activeSidebarItem\|g_refreshRequested' switch/source/main.cpp; then
-            echo 'Legacy experimental navigation state leaked into clean foundation'
+          test -f switch/source/app.cpp
+          test -f switch/source/anilist.cpp
+          test -f switch/source/anilist_parser.cpp
+          test -f switch/source/json.cpp
+          test -f switch/source/home.cpp
+          test -f switch/source/image_cache.cpp
+          grep -q 'CPPFILES := $(filter-out main.cpp' switch/Makefile
+          if grep -R 'miruro.zenos.my.id/trending' switch/source/anilist.cpp switch/source/home.cpp switch/source/app.cpp; then
+            echo 'Miruro leaked into the AniList/Home layer'
             exit 1
           fi
 
-      - name: Build ELF
+      - name: Build NRO
         working-directory: switch
         run: |
           set -eux
           test -d romfs
-          test -f romfs/xml/activity/main.xml
           make clean
           make -j2 V=1
-          ls -lh saikou_switch.elf saikou_switch.nacp
-
-      - name: Package NRO
-        working-directory: switch
-        run: |
-          set -eux
-          test -d romfs
-          rm -f saikou_switch.nro
-          "${DEVKITPRO}/tools/bin/elf2nro" saikou_switch.elf saikou_switch.nro --nacp=saikou_switch.nacp --romfsdir="${PWD}/romfs"
           test -s saikou_switch.nro
-          ls -lh saikou_switch.nro
+          ls -lh saikou_switch.elf saikou_switch.nacp saikou_switch.nro
 
       - name: Upload NRO artifact
         uses: actions/upload-artifact@v4
