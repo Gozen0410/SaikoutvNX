@@ -17,7 +17,6 @@ set(VERSION_ALTER "0")
 set(PROJECT_AUTHOR "Gozen0410")
 set(APP_TITLE "Saikou Switch")
 set(PROJECT_TITLEID "0x010000000000A456")
-set(PROJECT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/romfs/img/icon.jpg")
 set(PROJECT_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/borealis/resources")
 
 add_subdirectory(${BOREALIS_LIBRARY} borealis)
@@ -72,7 +71,6 @@ if (PLATFORM_SWITCH)
         COMMAND ${NX_ELF2NRO_EXE}
             ${PROJECT_NAME}.elf
             ${PROJECT_NAME}.nro
-            --icon=${PROJECT_ICON}
             --nacp=${PROJECT_NAME}.nacp
             --romfsdir=${SAIKOU_RESOURCES})
 endif()
