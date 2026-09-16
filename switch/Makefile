@@ -27,7 +27,7 @@ CFLAGS += -D__SWITCH__ $(INCLUDE)
 CXXFLAGS := $(CFLAGS) -std=c++1z -O2 -Wno-volatile -include optional
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LIBS := -lcurl -lz -lnx
+LIBS := -lcurl -ljpeg -lz -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 
 include $(TOPDIR)/$(BOREALIS_PATH)/library/borealis.mk
