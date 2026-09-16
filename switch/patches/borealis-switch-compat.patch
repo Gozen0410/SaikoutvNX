@@ -11,30 +11,30 @@ index 1a11b724..1a11b724 100644
      swkbdConfigSetBlurBackground(&config, true);
  
      return config;
- 
- diff --git a/library/lib/views/image.cpp b/library/lib/views/image.cpp
- index 00424f3..00424f3 100644
- --- a/library/lib/views/image.cpp
- +++ b/library/lib/views/image.cpp
- @@ -174,21 +174,21 @@ void Image::invalidateImageBounds()
-          }
-          case ImageScalingType::CROP:
-          {
-              if (viewAspectRatio < imageAspectRatio)
-              {
- -                this->imageHeight = this->originalImageHeight;
- -                this->imageWidth  = this->imageHeight * imageAspectRatio;
- +                this->imageHeight = this->getHeight();
- +                this->imageWidth  = this->imageHeight * imageAspectRatio;
-                  this->imageX      = (width - this->imageWidth) / 2.0F;
-                  this->imageY      = 0;
-              }
-              else
-              {
- -                this->imageWidth  = this->originalImageWidth;
- +                this->imageWidth  = this->getWidth();
-                  this->imageHeight = this->imageWidth * imageAspectRatio;
-                  this->imageY      = (height - this->imageHeight) / 2.0F;
-                  this->imageX      = 0;
-              }
-              break;
+
+diff --git a/library/lib/views/image.cpp b/library/lib/views/image.cpp
+index 00424f3..00424f3 100644
+--- a/library/lib/views/image.cpp
++++ b/library/lib/views/image.cpp
+@@ -174,21 +174,21 @@ void Image::invalidateImageBounds()
+         }
+         case ImageScalingType::CROP:
+         {
+             if (viewAspectRatio < imageAspectRatio)
+             {
+-                this->imageHeight = this->originalImageHeight;
+-                this->imageWidth  = this->imageHeight * imageAspectRatio;
++                this->imageHeight = this->getHeight();
++                this->imageWidth  = this->imageHeight * imageAspectRatio;
+                 this->imageX      = (width - this->imageWidth) / 2.0F;
+                 this->imageY      = 0;
+             }
+             else
+             {
+-                this->imageWidth  = this->originalImageWidth;
++                this->imageWidth  = this->getWidth();
+                 this->imageHeight = this->imageWidth * imageAspectRatio;
+                 this->imageY      = (height - this->imageHeight) / 2.0F;
+                 this->imageX      = 0;
+             }
+             break;
