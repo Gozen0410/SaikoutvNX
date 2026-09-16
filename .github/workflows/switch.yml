@@ -58,17 +58,43 @@ jobs:
               if anchor not in s:
                   raise SystemExit('TabFrame addTab declaration not found')
               s = s.replace(anchor, anchor + '\n' + declaration, 1)
-              p.write_text(s)
+          factory_declaration = '    void setTabContentFactory(std::function<View*(const std::string&, TabViewCreator)> factory);'
+          if factory_declaration not in s:
+              anchor = '    void setTabContent(View* content);'
+              if anchor not in s:
+                  raise SystemExit('TabFrame setTabContent declaration not found')
+              s = s.replace(anchor, anchor + '\n' + factory_declaration, 1)
+          member = '    std::function<View*(const std::string&, TabViewCreator)> tabContentFactory;'
+          if member not in s:
+              anchor = '    View* activeTab = nullptr;'
+              if anchor not in s:
+                  raise SystemExit('TabFrame activeTab member not found')
+              s = s.replace(anchor, anchor + '\n    ' + member.strip(), 1)
+          p.write_text(s)
 
           p = Path('library/lib/views/tab_frame.cpp')
           s = p.read_text()
+          old_capture = 'this->sidebar->addItem(label, [this, creator](brls::View* view) {'
+          new_capture = 'this->sidebar->addItem(label, [this, label, creator](brls::View* view) {'
+          if old_capture in s:
+              s = s.replace(old_capture, new_capture, 1)
+          old_creator = '        View* newContent = creator();'
+          new_creator = '        View* newContent = this->tabContentFactory ? this->tabContentFactory(label, creator) : creator();'
+          if old_creator in s:
+              s = s.replace(old_creator, new_creator, 1)
+          if 'void TabFrame::setTabContentFactory(std::function<View*(const std::string&, TabViewCreator)> factory)' not in s:
+              anchor = '\nvoid TabFrame::addSeparator()'
+              if anchor not in s:
+                  raise SystemExit('TabFrame addSeparator implementation not found')
+              implementation = '''\nvoid TabFrame::setTabContentFactory(std::function<View*(const std::string&, TabViewCreator)> factory)\n{\n    this->tabContentFactory = std::move(factory);\n}\n'''
+              s = s.replace(anchor, implementation + anchor, 1)
           if 'void TabFrame::setTabContent(View* content)' not in s:
               anchor = '\nvoid TabFrame::addSeparator()'
               if anchor not in s:
                   raise SystemExit('TabFrame addSeparator implementation not found')
               implementation = '''\nvoid TabFrame::setTabContent(View* content)\n{\n    Box* contentView = (Box*)this->contentView;\n    if (this->activeTab)\n    {\n        contentView->removeView(this->activeTab);\n        this->activeTab = nullptr;\n    }\n    if (!content)\n        return;\n    content->setGrow(1.0f);\n    contentView->addView(content);\n    this->activeTab = content;\n}\n'''
               s = s.replace(anchor, implementation + anchor, 1)
-              p.write_text(s)
+          p.write_text(s)
           PY
 
       - name: Apply AniList Home data source
@@ -79,27 +105,33 @@ jobs:
           test -f switch/source/main.cpp
           grep -q 'ANILIST HOME REQUEST' switch/source/main.cpp
           grep -q 'graphql.anilist.co' switch/source/main.cpp
+          grep -q 'TRENDING SESSION CACHE STORED 6 CARDS' switch/source/main.cpp
+          grep -q 'HOME TAB RESTORED FROM SESSION CACHE' switch/source/main.cpp
           if grep -q 'miruro.zenos.my.id/trending' switch/source/main.cpp; then
             echo 'Unexpected Miruro Home endpoint after clean AniList migration'
             exit 1
           fi
 
-      - name: Restore normal + exit behavior
+      - name: Restore normal main-loop exit behavior
         run: |
           set -eux
           python3 - <<'PY'
           from pathlib import Path
           p = Path('switch/source/main.cpp')
           s = p.read_text()
-          old = 'brls::Application::setGlobalQuit(false);'
-          new = 'brls::Application::setGlobalQuit(true);'
-          if old in s:
-              s = s.replace(old, new, 1)
-          if new not in s:
-              raise SystemExit('Could not restore global + exit behavior')
+          s = s.replace('brls::Application::setGlobalQuit(true);', 'brls::Application::setGlobalQuit(false);', 1)
+          s = s.replace('    brls::Application::exit();\n', '', 1)
+          if 'brls::Application::setGlobalQuit(false);' not in s:
+              raise SystemExit('Could not restore normal global quit behavior')
+          if 'brls::Application::exit();' in s:
+              raise SystemExit('Private Application::exit call remains')
           p.write_text(s)
           PY
-          grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
+          grep -q 'brls::Application::setGlobalQuit(false);' switch/source/main.cpp
+          if grep -q 'brls::Application::exit();' switch/source/main.cpp; then
+            echo 'Explicit private Application::exit call remains'
+            exit 1
+          fi
 
       - name: Verify clean navigation foundation
         run: |
