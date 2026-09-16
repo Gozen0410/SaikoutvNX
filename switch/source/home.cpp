@@ -22,7 +22,9 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     card->setHeight(305);
     card->setMargins(4, 6, 4, 0);
     card->setFocusable(true);
-    card->setHighlightPadding(5.0f);
+    // Keep the focus frame inside the card bounds so it does not intrude into
+    // neighboring cards or their text.
+    card->setHighlightPadding(0.0f);
     card->setCornerRadius(6.0f);
 
     const std::string imagePath = ensureAnimeCoverCached(anime);
