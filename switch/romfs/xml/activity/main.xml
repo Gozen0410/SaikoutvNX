@@ -1,32 +1,10 @@
-<brls:TabFrame title="Saikou Switch">
-    <brls:Tab label="Home">
-        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingBottom="40" paddingLeft="50" paddingRight="50">
-            <brls:Label width="auto" height="auto" text="Saikou Switch" fontSize="42" horizontalAlign="center" />
-            <brls:Label width="auto" height="auto" text="Your anime, rebuilt for Nintendo Switch" marginTop="20" horizontalAlign="center" />
-            <brls:Label width="auto" height="auto" text="Trending" fontSize="30" />
-            <brls:Label width="auto" height="auto" text="AniList integration coming next" marginTop="20" />
-        </brls:Box>
-    </brls:Tab>
-
-    <brls:Tab label="Search">
-        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
-            <brls:Label width="auto" height="auto" text="Search Anime" fontSize="36" />
-            <brls:Label width="auto" height="auto" text="Network search will be added in the next milestone." marginTop="20" />
-        </brls:Box>
-    </brls:Tab>
-
-    <brls:Tab label="Library">
-        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
-            <brls:Label width="auto" height="auto" text="Library" fontSize="36" />
-            <brls:Label width="auto" height="auto" text="Favorites and watch history will live here." marginTop="20" />
-        </brls:Box>
-    </brls:Tab>
-
+<brls:Box width="auto" height="auto" axis="column" paddingTop="22" paddingBottom="24" paddingLeft="34" paddingRight="34">
+    <brls:Box id="home/header" width="auto" height="58" axis="row" alignItems="center">
+        <brls:Label id="nav/home" width="auto" height="auto" text="Home" fontSize="23" marginRight="34" />
+        <brls:Label id="nav/search" width="auto" height="auto" text="Search" fontSize="23" marginRight="34" />
+        <brls:Label id="nav/library" width="auto" height="auto" text="Library" fontSize="23" marginRight="34" />
+        <brls:Label id="nav/settings" width="auto" height="auto" text="Settings" fontSize="23" />
+    </brls:Box>
     <brls:Separator />
-    <brls:Tab label="Settings">
-        <brls:Box width="auto" height="auto" axis="column" paddingTop="40" paddingLeft="50" paddingRight="50">
-            <brls:Label width="auto" height="auto" text="Settings" fontSize="36" />
-            <brls:Label width="auto" height="auto" text="Saikou Switch native port" marginTop="20" />
-        </brls:Box>
-    </brls:Tab>
-</brls:TabFrame>
+    <brls:Box id="home/content" width="auto" height="auto" axis="column" marginTop="18" />
+</brls:Box>
