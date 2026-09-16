@@ -50,6 +50,8 @@ jobs:
           needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
           p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
 
+          # Keep the old TabFrame compatibility patch available to the project,
+          # but the current Home UI no longer instantiates a TabFrame.
           p = Path('library/include/borealis/views/tab_frame.hpp')
           s = p.read_text()
           declaration = '    void setTabContent(View* content);'
@@ -84,6 +86,128 @@ jobs:
             exit 1
           fi
 
+      - name: Apply header Home runtime
+        run: |
+          set -eux
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('switch/source/main.cpp')
+          s = p.read_text()
+
+          # The XML root is now a normal Box with a top navigation row and a
+          # dedicated content box. Replace only the old TabFrame-driven main()
+          # entry point; all AniList parsing and card rendering remains intact.
+          start = s.find('int main(int argc, char* argv[])')
+          if start < 0:
+              raise SystemExit('main() start not found')
+
+          new_main = r'''int main(int argc, char* argv[])
+          {
+              (void)argc;
+              (void)argv;
+              fsdevMountSdmc();
+              ensure_app_dirs();
+              g_log = std::fopen(kLogPath, "w");
+              log_stage("entered main");
+              brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
+              log_stage("logger configured");
+
+              Result romfsRc = romfsInit();
+              log_stage(R_SUCCEEDED(romfsRc) ? "romfsInit OK" : "romfsInit FAILED");
+              log_stage("closing Saikou log before Borealis init");
+              if (g_log) { std::fclose(g_log); g_log = nullptr; }
+
+              if (!brls::Application::init()) return EXIT_FAILURE;
+              log_stage("Application::init OK");
+              brls::Application::createWindow("Saikou Switch");
+              log_stage("Borealis window created");
+              brls::Application::setGlobalQuit(false);
+
+              HomeActivity* activity = new HomeActivity();
+              log_stage("BEFORE HomeActivity construction");
+              brls::Application::pushActivity(activity);
+              log_stage("AFTER pushActivity(home)");
+
+              brls::Box* root = dynamic_cast<brls::Box*>(activity->getContentView());
+              if (!root)
+                  log_stage("ROOT VIEW IS NOT BOX");
+              else
+              {
+                  brls::Label* navHome = dynamic_cast<brls::Label*>(root->getView("nav/home"));
+                  brls::Label* navSearch = dynamic_cast<brls::Label*>(root->getView("nav/search"));
+                  brls::Label* navLibrary = dynamic_cast<brls::Label*>(root->getView("nav/library"));
+                  brls::Label* navSettings = dynamic_cast<brls::Label*>(root->getView("nav/settings"));
+                  brls::Box* content = dynamic_cast<brls::Box*>(root->getView("home/content"));
+
+                  brls::Label* navs[] = {navHome, navSearch, navLibrary, navSettings};
+                  for (size_t i = 0; i < 4; ++i)
+                  {
+                      if (!navs[i]) continue;
+                      navs[i]->setFocusable(true);
+                      navs[i]->setFocusSound(brls::SOUND_FOCUS_CHANGE);
+                      const char* names[] = {"Home", "Search", "Library", "Settings"};
+                      navs[i]->registerAction(names[i], brls::BUTTON_A, [i](brls::View*) {
+                          char marker[64];
+                          std::snprintf(marker, sizeof(marker), "HEADER TAB SELECTED %zu", i);
+                          log_stage(marker);
+                          return true;
+                      });
+                  }
+
+                  if (navHome)
+                      brls::Application::giveFocus(navHome);
+
+                  if (content)
+                  {
+                      log_stage("BEFORE API PROBE");
+                      ApiResult api = run_api_probe();
+                      log_stage("AFTER API PROBE");
+
+                      brls::Label* status = new brls::Label();
+                      status->setText(api.status);
+                      status->setFontSize(15);
+                      status->setFocusable(false);
+                      content->addView(status);
+                      log_stage("API STATUS LABEL ATTACHED");
+
+                      if (!api.response.empty())
+                          render_trending(content, api.response);
+                  }
+                  else
+                      log_stage("HOME CONTENT BOX NOT FOUND");
+              }
+
+              log_stage("AFTER HEADER HOME ATTACHMENT PATH");
+              int loopCount = 0;
+              while (brls::Application::mainLoop())
+              {
+                  ++loopCount;
+                  if (loopCount <= 5)
+                  {
+                      char marker[64];
+                      std::snprintf(marker, sizeof(marker), "mainLoop returned true #%d", loopCount);
+                      log_stage(marker);
+                  }
+              }
+
+              log_stage("mainLoop returned false");
+              romfsExit();
+              return EXIT_SUCCESS;
+          }
+          '''
+
+          s = s[:start] + new_main
+          p.write_text(s)
+          PY
+          grep -q 'HEADER TAB SELECTED' switch/source/main.cpp
+          grep -q 'home/content' switch/romfs/xml/activity/main.xml
+          if grep -q 'dynamic_cast<brls::TabFrame' switch/source/main.cpp; then
+            echo 'Old TabFrame Home runtime leaked into header build'
+            exit 1
+          fi
+
       - name: Restore normal + exit behavior
         run: |
           set -eux
@@ -92,8 +216,8 @@ jobs:
           p = Path('switch/source/main.cpp')
           s = p.read_text()
 
-          # Borealis revision 7ae6c28 does not expose Activity::getDefaultFocus()
-          # as a virtual method. Remove only the stale override before compiling.
+          # Borealis revision 7ae6c28 exposes Activity::getDefaultFocus() as a
+          # non-virtual helper, so HomeActivity must not override it.
           stale = '    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n'
           if stale in s:
               s = s.replace(stale, '', 1)
@@ -112,16 +236,18 @@ jobs:
           fi
           grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
 
-      - name: Verify clean navigation foundation
+      - name: Verify header navigation foundation
         run: |
           set -eux
           test -f switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Home">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Search">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Library">' switch/romfs/xml/activity/main.xml
-          grep -q '<brls:Tab label="Settings">' switch/romfs/xml/activity/main.xml
-          if grep -q 'AnimeDetailsActivity\|ApiSourceActivity\|g_activeSidebarItem\|g_refreshRequested' switch/source/main.cpp; then
-            echo 'Legacy experimental navigation state leaked into clean foundation'
+          grep -q '<brls:Box id="home/header"' switch/romfs/xml/activity/main.xml
+          grep -q 'id="nav/home"' switch/romfs/xml/activity/main.xml
+          grep -q 'id="nav/search"' switch/romfs/xml/activity/main.xml
+          grep -q 'id="nav/library"' switch/romfs/xml/activity/main.xml
+          grep -q 'id="nav/settings"' switch/romfs/xml/activity/main.xml
+          grep -q 'id="home/content"' switch/romfs/xml/activity/main.xml
+          if grep -q '<brls:TabFrame' switch/romfs/xml/activity/main.xml; then
+            echo 'Old sidebar TabFrame layout leaked into header build'
             exit 1
           fi
 
