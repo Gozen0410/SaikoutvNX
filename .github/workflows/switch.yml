@@ -45,13 +45,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path('library/lib/platforms/switch/swkbd.cpp')
-          lines = p.read_text().splitlines()
-          needle = 'swkbdConfigSetStringLenMaxExt(&config, 1);'
-          p.write_text('\n'.join(line for line in lines if needle not in line) + '\n')
-
-          # Keep the old TabFrame compatibility patch available to the project,
-          # but the current Home UI no longer instantiates a TabFrame.
+          # Saikou no longer uses TabFrame for Home, but keep this tiny
+          # compatibility hook available for any remaining legacy code.
           p = Path('library/include/borealis/views/tab_frame.hpp')
           s = p.read_text()
           declaration = '    void setTabContent(View* content);'
@@ -91,14 +86,9 @@ jobs:
           set -eux
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           p = Path('switch/source/main.cpp')
           s = p.read_text()
-
-          # The XML root is now a normal Box with a top navigation row and a
-          # dedicated content box. Replace only the old TabFrame-driven main()
-          # entry point; all AniList parsing and card rendering remains intact.
           start = s.find('int main(int argc, char* argv[])')
           if start < 0:
               raise SystemExit('main() start not found')
@@ -142,12 +132,12 @@ jobs:
                   brls::Box* content = dynamic_cast<brls::Box*>(root->getView("home/content"));
 
                   brls::Label* navs[] = {navHome, navSearch, navLibrary, navSettings};
+                  const char* names[] = {"Home", "Search", "Library", "Settings"};
                   for (size_t i = 0; i < 4; ++i)
                   {
                       if (!navs[i]) continue;
                       navs[i]->setFocusable(true);
                       navs[i]->setFocusSound(brls::SOUND_FOCUS_CHANGE);
-                      const char* names[] = {"Home", "Search", "Library", "Settings"};
                       navs[i]->registerAction(names[i], brls::BUTTON_A, [i](brls::View*) {
                           char marker[64];
                           std::snprintf(marker, sizeof(marker), "HEADER TAB SELECTED %zu", i);
@@ -198,8 +188,7 @@ jobs:
           }
           '''
 
-          s = s[:start] + new_main
-          p.write_text(s)
+          p.write_text(s[:start] + new_main)
           PY
           grep -q 'HEADER TAB SELECTED' switch/source/main.cpp
           grep -q 'home/content' switch/romfs/xml/activity/main.xml
@@ -215,13 +204,9 @@ jobs:
           from pathlib import Path
           p = Path('switch/source/main.cpp')
           s = p.read_text()
-
-          # Borealis 5f08b286 still exposes Activity::getDefaultFocus() as a
-          # non-virtual helper, so HomeActivity must not override it.
           stale = '    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n'
           if stale in s:
               s = s.replace(stale, '', 1)
-
           old = 'brls::Application::setGlobalQuit(false);'
           new = 'brls::Application::setGlobalQuit(true);'
           if old in s:
