@@ -91,6 +91,13 @@ jobs:
           from pathlib import Path
           p = Path('switch/source/main.cpp')
           s = p.read_text()
+
+          # Borealis revision 7ae6c28 does not expose Activity::getDefaultFocus()
+          # as a virtual method. Remove only the stale override before compiling.
+          stale = '    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n'
+          if stale in s:
+              s = s.replace(stale, '', 1)
+
           old = 'brls::Application::setGlobalQuit(false);'
           new = 'brls::Application::setGlobalQuit(true);'
           if old in s:
@@ -99,6 +106,10 @@ jobs:
               raise SystemExit('Could not restore global + exit behavior')
           p.write_text(s)
           PY
+          if grep -q 'getDefaultFocus() override' switch/source/main.cpp; then
+            echo 'Unsupported getDefaultFocus override remains in main.cpp'
+            exit 1
+          fi
           grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
 
       - name: Verify clean navigation foundation
