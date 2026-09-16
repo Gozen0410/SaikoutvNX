@@ -32,25 +32,23 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        // Give the card a real poster holder. The holder owns the geometry;
-        // the Image only fills that box with FIT so the source aspect ratio is
-        // preserved without the texture determining the card layout.
+        // Fixed 162x243 (2:3) holder. Borealis FIT sizes the image within it;
+        // the image itself is allowed to shrink to the holder rather than
+        // forcing percentage dimensions through Yoga.
         auto* holder = new brls::Box(brls::Axis::COLUMN);
         holder->setWidth(162.0f);
         holder->setHeight(243.0f);
-        holder->setShrink(0.0f);
         holder->setGrow(0.0f);
+        holder->setShrink(0.0f);
         holder->setAlignItems(brls::AlignItems::CENTER);
         holder->setJustifyContent(brls::JustifyContent::CENTER);
         holder->setFocusable(false);
 
         auto* image = new brls::Image();
-        image->setWidthPercentage(100.0f);
-        image->setHeightPercentage(100.0f);
         image->setScalingType(brls::ImageScalingType::FIT);
-        image->setShrink(0.0f);
-        image->setFocusable(false);
+        image->setShrink(1.0f);
         image->setImageFromFile(imagePath);
+        image->setFocusable(false);
         holder->addView(image);
         card->addView(holder);
     }
