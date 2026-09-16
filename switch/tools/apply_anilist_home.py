@@ -104,6 +104,9 @@ source = source[:start] + replacement + source[end:]
 # resolve focus normally.
 source = source.replace("    // Use Borealis' normal focus resolution now that the TabFrame lazy\n    // creator lifetime is fixed. This makes the sidebar receive initial focus.\n    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n", "")
 source = source.replace('response.find("results")', 'response.find("media")')
+# AniList returns Page.media rather than the old Miruro Page.results shape.
+# Keep the trending parser on the same response shape after this build-time rewrite.
+source = source.replace('response.find("\\\"results\\\"")', 'response.find("\\\"media\\\"")')
 
 main.write_text(source)
 print("Home API path now uses AniList only")
