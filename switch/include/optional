@@ -1,0 +1,8 @@
+#pragma once
+
+// Borealis 5f08 renamed the log-level enumerator to LOG_DEBUG. The current
+// Saikou bootstrap still refers to LogLevel::DEBUG, so map that token through
+// the existing forced-include hook without modifying vendored Borealis.
+#ifndef DEBUG
+#define DEBUG LOG_DEBUG
+#endif
