@@ -17,36 +17,42 @@ static std::string compactTitle(const std::string& title)
 static brls::Box* makeCard(const AnimeSummary& anime)
 {
     brls::Box* card = new brls::Box(brls::Axis::COLUMN);
+    // Keep the card close to AniList's portrait cover ratio (~2:3).
     card->setWidth(170);
     card->setHeight(305);
     card->setMargins(4, 6, 4, 0);
     card->setPaddingTop(4.0f);
     card->setPaddingBottom(4.0f);
     card->setFocusable(true);
+    // Keep the focus frame inside the card bounds so it does not intrude into
+    // neighboring cards or their text.
     card->setHighlightPadding(0.0f);
     card->setCornerRadius(6.0f);
 
     const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        // Fixed poster slot: 162x243 is exactly 2:3. The holder is constrained;
-        // the Image itself only fits its source inside that slot.
-        auto* imageHolder = new brls::Box(brls::Axis::COLUMN);
-        imageHolder->setWidth(162.0f);
-        imageHolder->setHeight(243.0f);
-        imageHolder->setGrow(0.0f);
-        imageHolder->setShrink(0.0f);
-        imageHolder->setAlignItems(brls::AlignItems::CENTER);
-        imageHolder->setJustifyContent(brls::JustifyContent::CENTER);
-        imageHolder->setFocusable(false);
+        // Give the card a real poster holder. The holder owns the geometry;
+        // the Image only fills that box with FIT so the source aspect ratio is
+        // preserved without the texture determining the card layout.
+        auto* holder = new brls::Box(brls::Axis::COLUMN);
+        holder->setWidth(162.0f);
+        holder->setHeight(243.0f);
+        holder->setShrink(0.0f);
+        holder->setGrow(0.0f);
+        holder->setAlignItems(brls::AlignItems::CENTER);
+        holder->setJustifyContent(brls::JustifyContent::CENTER);
+        holder->setFocusable(false);
 
         auto* image = new brls::Image();
+        image->setWidthPercentage(100.0f);
+        image->setHeightPercentage(100.0f);
         image->setScalingType(brls::ImageScalingType::FIT);
-        image->setShrink(1.0f);
-        image->setImageFromFile(imagePath);
+        image->setShrink(0.0f);
         image->setFocusable(false);
-        imageHolder->addView(image);
-        card->addView(imageHolder);
+        image->setImageFromFile(imagePath);
+        holder->addView(image);
+        card->addView(holder);
     }
     else
     {
