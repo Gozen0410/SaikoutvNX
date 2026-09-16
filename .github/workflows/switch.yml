@@ -133,3 +133,11 @@ jobs:
           "${DEVKITPRO}/tools/bin/elf2nro" saikou_switch.elf saikou_switch.nro --nacp=saikou_switch.nacp --romfsdir="${PWD}/romfs"
           test -s saikou_switch.nro
           ls -lh saikou_switch.nro
+
+      - name: Upload NRO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaikouTV-NRO
+          path: switch/saikou_switch.nro
+          if-no-files-found: error
+          retention-days: 14
