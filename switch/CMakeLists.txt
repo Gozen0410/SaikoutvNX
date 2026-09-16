@@ -67,6 +67,18 @@ if (PLATFORM_SWITCH)
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_RESOURCES} ${SAIKOU_RESOURCES}
+        # Match the useful part of NX-torrent-player's Borealis packaging:
+        # keep system images/material/i18n, but drop demo/sample resources that
+        # only inflate the NRO and are unrelated to Saikou.
+        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/font
+        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/img/pokemon
+        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/xml
+        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/icon
+        COMMAND ${CMAKE_COMMAND} -E remove -f
+            ${SAIKOU_RESOURCES}/img/tiles.png
+            ${SAIKOU_RESOURCES}/img/demo_icon.jpg
+            ${SAIKOU_RESOURCES}/img/borealis_256.png
+            ${SAIKOU_RESOURCES}/img/borealis_96.png
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/romfs ${SAIKOU_RESOURCES}
         COMMAND ${NX_ELF2NRO_EXE}
             ${PROJECT_NAME}.elf
