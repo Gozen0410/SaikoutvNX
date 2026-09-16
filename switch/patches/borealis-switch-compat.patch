@@ -1,0 +1,13 @@
+diff --git a/library/lib/platforms/switch/swkbd.cpp b/library/lib/platforms/switch/swkbd.cpp
+index 1a11b724..1a11b724 100644
+--- a/library/lib/platforms/switch/swkbd.cpp
++++ b/library/lib/platforms/switch/swkbd.cpp
+@@ -32,7 +32,6 @@ static SwkbdConfig createSwkbdBaseConfig(std::string headerText, std::string subT
+     swkbdConfigSetHeaderText(&config, headerText.c_str());
+     swkbdConfigSetSubText(&config, subText.c_str());
+     swkbdConfigSetStringLenMax(&config, maxStringLength);
+     swkbdConfigSetInitialText(&config, initialText.c_str());
+-    swkbdConfigSetStringLenMaxExt(&config, 1);
+     swkbdConfigSetBlurBackground(&config, true);
+ 
+     return config;
