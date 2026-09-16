@@ -41,7 +41,7 @@ jobs:
       - name: Apply committed Borealis compatibility patch
         run: |
           set -eux
-          git -C switch/borealis apply switch/patches/borealis-switch-compat.patch
+          git -C switch/borealis apply ../patches/borealis-switch-compat.patch
           grep -q 'swkbdConfigSetInitialText' switch/borealis/library/lib/platforms/switch/swkbd.cpp
           if grep -q 'swkbdConfigSetStringLenMaxExt(&config, 1);' switch/borealis/library/lib/platforms/switch/swkbd.cpp; then
             echo 'Borealis compatibility patch was not applied'
