@@ -11,11 +11,12 @@ index 1a11b724..1a11b724 100644
      swkbdConfigSetBlurBackground(&config, true);
  
      return config;
- diff --git a/library/lib/views/image.cpp b/library/lib/views/image.cpp
- index 00424f3..00424f3 100644
- --- a/library/lib/views/image.cpp
- +++ b/library/lib/views/image.cpp
- @@ -174,17 +174,17 @@ void Image::invalidateImageBounds()
+
+diff --git a/library/lib/views/image.cpp b/library/lib/views/image.cpp
+index 00424f3..00424f3 100644
+--- a/library/lib/views/image.cpp
++++ b/library/lib/views/image.cpp
+@@ -174,17 +174,17 @@ void Image::invalidateImageBounds()
          }
          case ImageScalingType::CROP:
              if (viewAspectRatio < imageAspectRatio)
