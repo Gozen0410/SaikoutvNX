@@ -453,6 +453,8 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
     {
         brls::Box* card = new brls::Box(brls::Axis::COLUMN);
         card->setWidth(124);
+        card->setShrink(0.0f);
+        card->setGrow(0.0f);
         card->setMargins(2, 3, 2, 0);
         card->setFocusable(true);
         card->setHighlightPadding(5.0f);
@@ -467,12 +469,23 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
             log_stage("BEFORE TRENDING CARD IMAGE DOWNLOAD");
             if (download_image(covers[i], imagePath))
             {
+                // Keep poster geometry in a fixed 2:3 holder. The image itself
+                // only decides how the source is drawn inside that holder.
+                brls::Box* imageHolder = new brls::Box(brls::Axis::COLUMN);
+                imageHolder->setWidth(116);
+                imageHolder->setHeight(174);
+                imageHolder->setShrink(0.0f);
+                imageHolder->setGrow(0.0f);
+                imageHolder->setAlignItems(brls::AlignItems::CENTER);
+
                 brls::Image* image = new brls::Image();
                 image->setDimensions(116, 174);
-                image->setScalingType(brls::ImageScalingType::CROP);
+                image->setShrink(0.0f);
+                image->setScalingType(brls::ImageScalingType::FIT);
                 image->setImageFromFile(imagePath);
                 image->setFocusable(false);
-                card->addView(image);
+                imageHolder->addView(image);
+                card->addView(imageHolder);
                 imageAttached = true;
                 log_stage("TRENDING CARD IMAGE ATTACHED");
             }
