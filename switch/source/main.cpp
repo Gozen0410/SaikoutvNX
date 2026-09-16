@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -53,8 +54,6 @@ static size_t file_write_callback(char* ptr, size_t size, size_t nmemb, void* us
 class HomeActivity : public brls::Activity
 {
 public:
-    // Use Borealis' normal focus resolution now that the TabFrame lazy
-    // creator lifetime is fixed. This makes the sidebar receive initial focus.
     brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }
     brls::View* createContentView() override
     {
@@ -321,25 +320,84 @@ static std::string json_nested_string_after(const std::string& text, size_t from
     return json_string_after(text, parentPos + parent.size(), childKey, limit);
 }
 
+// Return the six media-object ranges inside the API's results array. We use
+// brace-depth tracking so nested title/coverImage objects cannot shift the
+// cursor into the wrong object.
+static std::vector<std::pair<size_t, size_t>> extract_trending_items(const std::string& response)
+{
+    std::vector<std::pair<size_t, size_t>> items;
+    size_t resultsPos = response.find("\"results\"");
+    if (resultsPos == std::string::npos) return items;
+
+    size_t arrayStart = response.find('[', resultsPos);
+    if (arrayStart == std::string::npos) return items;
+
+    size_t cursor = arrayStart + 1;
+    while (cursor < response.size() && items.size() < 6)
+    {
+        while (cursor < response.size() && (response[cursor] == ' ' || response[cursor] == '\n' || response[cursor] == '\r' || response[cursor] == '\t' || response[cursor] == ',')) ++cursor;
+        if (cursor >= response.size() || response[cursor] == ']') break;
+        if (response[cursor] != '{')
+        {
+            ++cursor;
+            continue;
+        }
+
+        const size_t objectStart = cursor;
+        int depth = 0;
+        bool inString = false;
+        bool escaped = false;
+        size_t objectEnd = std::string::npos;
+        for (; cursor < response.size(); ++cursor)
+        {
+            const char ch = response[cursor];
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') inString = false;
+                continue;
+            }
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+            if (ch == '{') ++depth;
+            else if (ch == '}')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    objectEnd = cursor;
+                    ++cursor;
+                    break;
+                }
+            }
+        }
+
+        if (objectEnd == std::string::npos) break;
+        items.emplace_back(objectStart, objectEnd + 1);
+    }
+    return items;
+}
+
 static std::vector<std::string> extract_trending_titles(const std::string& response)
 {
     std::vector<std::string> titles;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return titles;
-    size_t cursor = resultsPos;
-    while (titles.size() < 6)
+    const auto items = extract_trending_items(response);
+    for (const auto& item : items)
     {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t objectStart = response.find('{', titlePos);
-        if (objectStart == std::string::npos) break;
-        size_t objectEnd = response.find('}', objectStart + 1);
-        if (objectEnd == std::string::npos) break;
-        std::string title = json_string_after(response, objectStart, "english", objectEnd);
-        if (title.empty()) title = json_string_after(response, objectStart, "romaji", objectEnd);
-        if (title.empty()) title = json_string_after(response, objectStart, "native", objectEnd);
+        const size_t objectStart = item.first;
+        const size_t objectEnd = item.second;
+        const size_t titlePos = response.find("\"title\"", objectStart);
+        if (titlePos == std::string::npos || titlePos >= objectEnd) continue;
+        const size_t titleObjectStart = response.find('{', titlePos);
+        if (titleObjectStart == std::string::npos || titleObjectStart >= objectEnd) continue;
+        std::string title = json_string_after(response, titleObjectStart, "english", objectEnd);
+        if (title.empty()) title = json_string_after(response, titleObjectStart, "romaji", objectEnd);
+        if (title.empty()) title = json_string_after(response, titleObjectStart, "native", objectEnd);
         if (!title.empty()) titles.push_back(title);
-        cursor = objectEnd + 1;
     }
     return titles;
 }
@@ -347,22 +405,14 @@ static std::vector<std::string> extract_trending_titles(const std::string& respo
 static std::vector<std::string> extract_trending_details(const std::string& response)
 {
     std::vector<std::string> details;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return details;
-    size_t cursor = resultsPos;
-    while (details.size() < 6)
+    const auto items = extract_trending_items(response);
+    for (const auto& item : items)
     {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t objectStart = response.find('{', titlePos);
-        if (objectStart == std::string::npos) break;
-        size_t objectEnd = response.find('}', objectStart + 1);
-        if (objectEnd == std::string::npos) break;
-        size_t itemEnd = response.find("\"title\"", objectEnd + 1);
-        if (itemEnd == std::string::npos) itemEnd = response.size();
-        std::string format = json_string_after(response, objectEnd, "format", itemEnd);
-        if (format.empty()) format = json_string_after(response, objectEnd, "type", itemEnd);
-        std::string score = json_value_after(response, objectEnd, "averageScore", itemEnd);
+        const size_t objectStart = item.first;
+        const size_t objectEnd = item.second;
+        std::string format = json_string_after(response, objectStart, "format", objectEnd);
+        if (format.empty()) format = json_string_after(response, objectStart, "type", objectEnd);
+        std::string score = json_value_after(response, objectStart, "averageScore", objectEnd);
         std::string detail;
         if (!format.empty()) detail += format;
         if (!score.empty() && score != "null")
@@ -371,7 +421,6 @@ static std::vector<std::string> extract_trending_details(const std::string& resp
             detail += "Score: " + score;
         }
         details.push_back(detail);
-        cursor = objectEnd + 1;
     }
     return details;
 }
@@ -379,18 +428,13 @@ static std::vector<std::string> extract_trending_details(const std::string& resp
 static std::vector<std::string> extract_trending_covers(const std::string& response)
 {
     std::vector<std::string> covers;
-    size_t resultsPos = response.find("\"results\"");
-    if (resultsPos == std::string::npos) return covers;
-    size_t cursor = resultsPos;
-    while (covers.size() < 6)
+    const auto items = extract_trending_items(response);
+    for (const auto& item : items)
     {
-        size_t titlePos = response.find("\"title\"", cursor);
-        if (titlePos == std::string::npos) break;
-        size_t itemEnd = response.find("\"title\"", titlePos + 8);
-        if (itemEnd == std::string::npos) itemEnd = response.size();
-        std::string cover = json_nested_string_after(response, titlePos, "coverImage", "large", itemEnd);
+        const size_t objectStart = item.first;
+        const size_t objectEnd = item.second;
+        std::string cover = json_nested_string_after(response, objectStart, "coverImage", "large", objectEnd);
         covers.push_back(cover);
-        cursor = itemEnd;
     }
     return covers;
 }
@@ -433,6 +477,9 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
     char marker[64];
     std::snprintf(marker, sizeof(marker), "TRENDING PARSE FOUND %zu TITLES", titles.size());
     log_stage(marker);
+    char coverMarker[64];
+    std::snprintf(coverMarker, sizeof(coverMarker), "TRENDING PARSE FOUND %zu COVERS", covers.size());
+    log_stage(coverMarker);
     if (titles.empty())
     {
         log_stage("TRENDING PARSE FOUND NO TITLES");
@@ -469,8 +516,7 @@ static void render_trending(brls::Box* homeBox, const std::string& response)
             log_stage("BEFORE TRENDING CARD IMAGE DOWNLOAD");
             if (download_image(covers[i], imagePath))
             {
-                // Keep poster geometry in a fixed 2:3 holder. The image itself
-                // only decides how the source is drawn inside that holder.
+                // Keep the image geometry exactly as in the holder experiment.
                 brls::Box* imageHolder = new brls::Box(brls::Axis::COLUMN);
                 imageHolder->setWidth(116);
                 imageHolder->setHeight(174);
@@ -597,8 +643,6 @@ int main(int argc, char* argv[])
                         brls::Box* homeBox = dynamic_cast<brls::Box*>(homeContent);
                         if (homeBox)
                         {
-                            // Keep the whole content panel as a valid fallback focus target
-                            // when the network is unavailable and no cards exist.
                             homeBox->setFocusable(true);
                             brls::Label* status = new brls::Label();
                             status->setText(api.status);
