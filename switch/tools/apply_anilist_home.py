@@ -108,5 +108,9 @@ source = source.replace('response.find("results")', 'response.find("media")')
 # Keep the trending parser on the same response shape after this build-time rewrite.
 source = source.replace('response.find("\\\"results\\\"")', 'response.find("\\\"media\\\"")')
 
+# TEMPORARY SMOKE TEST: isolate the new Borealis/Activity layer from our XML.
+# The workflow's header runtime still runs, but HomeActivity returns a bare Box.
+source = source.replace('        brls::View* view = brls::View::createFromXMLResource("activity/main.xml");\n        log_stage(view ? "AFTER XML createContentView OK" : "AFTER XML createContentView NULL");\n        return view;', '        log_stage("XML BYPASS SMOKE TEST");\n        return new brls::Box();')
+
 main.write_text(source)
-print("Home API path now uses AniList only")
+print("Home API path now uses AniList only; XML bypass smoke test enabled")
