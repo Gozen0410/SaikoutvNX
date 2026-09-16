@@ -20,6 +20,10 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     // Keep the card close to AniList's portrait cover ratio (~2:3).
     card->setWidth(170);
     card->setHeight(305);
+    // Give the complete card content a small vertical inset so the image,
+    // title, and metadata sit comfortably inside the focus frame.
+    card->setPaddingTop(4.0f);
+    card->setPaddingBottom(4.0f);
     card->setMargins(4, 6, 4, 0);
     card->setFocusable(true);
     // Keep the focus frame inside the card bounds so it does not intrude into
