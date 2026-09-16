@@ -17,13 +17,29 @@ static void ensureAppDirs()
     mkdir("sdmc:/switch/SaikouTV/cache", 0777);
 }
 
+static void logStage(const char* message)
+{
+    FILE* log = std::fopen("sdmc:/switch/SaikouTV/saikou_debug.log", "a");
+    if (!log) return;
+    std::fprintf(log, "[Saikou] %s\n", message);
+    std::fflush(log);
+    std::fclose(log);
+}
+
 static const AnimeList& getTrending()
 {
     if (!g_trendingAttempted)
     {
         g_trendingAttempted = true;
+        logStage("HOME TRENDING FIRST LOAD - REQUESTING ANILIST");
         g_trending = fetchAniListTrending();
+        if (g_trending.size() == 6)
+            logStage("HOME TRENDING SESSION CACHE STORED 6 CARDS");
+        else
+            logStage("HOME TRENDING LOAD FAILED - SESSION CACHE EMPTY");
     }
+    else
+        logStage("HOME TRENDING SESSION CACHE HIT - SKIPPING ANILIST REQUEST");
     return g_trending;
 }
 
