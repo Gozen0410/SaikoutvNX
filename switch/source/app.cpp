@@ -46,11 +46,6 @@ static const AnimeList& getTrending()
 class RootActivity : public brls::Activity
 {
 public:
-    brls::View* getDefaultFocus() override
-    {
-        return brls::Activity::getDefaultFocus();
-    }
-
     brls::View* createContentView() override
     {
         brls::TabFrame* tabs = new brls::TabFrame();
@@ -88,7 +83,9 @@ int main(int argc, char* argv[])
     if (!brls::Application::init())
         return EXIT_FAILURE;
 
-    brls::Application::getPlatform()->exitToHomeMode(true);
+    // Borealis' current Platform interface does not expose exitToHomeMode().
+    // Application::setGlobalQuit(true) provides the expected Switch exit behavior.
+    brls::Application::setGlobalQuit(true);
     brls::Application::createWindow("Saikou Switch");
     brls::Application::pushActivity(new RootActivity());
 
