@@ -74,13 +74,29 @@ jobs:
             exit 1
           fi
 
-      - name: Build NRO
+      - name: Build Switch ELF
         working-directory: switch
         run: |
           set -eux
           test -d romfs
+          test -f romfs/xml/activity/main.xml
           make clean
           make -j2 V=1
+          test -s saikou_switch.elf
+          test -s saikou_switch.nacp
+
+      - name: Package NRO with explicit ROMFS
+        working-directory: switch
+        run: |
+          set -eux
+          test -d romfs
+          test -f romfs/xml/activity/main.xml
+          rm -f saikou_switch.nro
+          "${DEVKITPRO}/tools/bin/elf2nro" \
+            saikou_switch.elf \
+            saikou_switch.nro \
+            --nacp=saikou_switch.nacp \
+            --romfsdir="${PWD}/romfs"
           test -s saikou_switch.nro
           ls -lh saikou_switch.elf saikou_switch.nacp saikou_switch.nro
 
