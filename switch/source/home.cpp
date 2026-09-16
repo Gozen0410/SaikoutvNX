@@ -46,7 +46,7 @@ static brls::Box* makeCard(const AnimeSummary& anime)
         auto* image = new brls::Image();
         image->setDimensions(162.0f, 243.0f);
         image->setShrink(0.0f);
-        image->setScalingType(brls::ImageScalingType::CROP);
+        image->setScalingType(brls::ImageScalingType::FILL);
         image->setImageAlign(brls::ImageAlignment::CENTER);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
