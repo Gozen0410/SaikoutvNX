@@ -18,8 +18,8 @@ OUT_SHADERS := shaders
 
 APP_TITLE := Saikou Switch
 APP_AUTHOR := SaikouTV Switch Port
-APP_VERSION := 0.2.0
-APP_DESCRIPTION := Native Switch Saikou UI prototype
+APP_VERSION := 0.3.0
+APP_DESCRIPTION := Native Switch SaikouTV client
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS := -g -Wall -O2 -ffunction-sections $(ARCH)
@@ -27,7 +27,6 @@ CFLAGS += -D__SWITCH__ $(INCLUDE)
 CXXFLAGS := $(CFLAGS) -std=c++1z -O2 -Wno-volatile -include optional
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-# libcurl is the Switch-native HTTPS client; keep it before libnx for static link order.
 LIBS := -lcurl -lz -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 
@@ -41,7 +40,10 @@ export VPATH := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) $(foreach dir,$(DATA)
 export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+CPPFILES_ALL := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+# Legacy main.cpp remains in the tree as a historical reference, but the
+# layered application has its entry point in app.cpp.
+CPPFILES := $(filter-out main.cpp,$(CPPFILES_ALL))
 SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 GLSLFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.glsl)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
@@ -59,14 +61,10 @@ export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) $(foreach dir,$(LIBDIRS),-I$(dir)/include) -I$(CURDIR)/$(BUILD)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-# Explicitly pass the ROMFS directory to libnx's elf2nro packaging step.
-# This is inherited by the recursive make running inside $(BUILD).
 ifneq ($(strip $(ROMFS)),)
 export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
 endif
 
-# Keep every resource under romfs/ as an explicit dependency so libnx's
-# NRO packaging step cannot consider a stale/incomplete ROMFS up to date.
 ROMFS_TARGETS :=
 ROMFS_FOLDERS :=
 ROMFS_FILES := $(shell find $(ROMFS) -type f 2>/dev/null)
