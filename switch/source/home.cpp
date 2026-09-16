@@ -17,31 +17,36 @@ static std::string compactTitle(const std::string& title)
 static brls::Box* makeCard(const AnimeSummary& anime)
 {
     brls::Box* card = new brls::Box(brls::Axis::COLUMN);
-    // Keep the card close to AniList's portrait cover ratio (~2:3).
     card->setWidth(170);
     card->setHeight(305);
     card->setMargins(4, 6, 4, 0);
     card->setPaddingTop(4.0f);
     card->setPaddingBottom(4.0f);
     card->setFocusable(true);
-    // Keep the focus frame inside the card bounds so it does not intrude into
-    // neighboring cards or their text.
     card->setHighlightPadding(0.0f);
     card->setCornerRadius(6.0f);
 
     const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        // Controlled image-layout test: fixed poster slot + FIT, with no custom
-        // Borealis changes, EXIF normalization, frame wrapper, or CROP/FILL.
-        // FIT preserves the source aspect ratio inside the exact 162x243 slot.
+        // Fixed poster slot: 162x243 is exactly 2:3. The holder is constrained;
+        // the Image itself only fits its source inside that slot.
+        auto* imageHolder = new brls::Box(brls::Axis::COLUMN);
+        imageHolder->setWidth(162.0f);
+        imageHolder->setHeight(243.0f);
+        imageHolder->setGrow(0.0f);
+        imageHolder->setShrink(0.0f);
+        imageHolder->setAlignItems(brls::AlignItems::CENTER);
+        imageHolder->setJustifyContent(brls::JustifyContent::CENTER);
+        imageHolder->setFocusable(false);
+
         auto* image = new brls::Image();
-        image->setDimensions(162.0f, 243.0f);
         image->setScalingType(brls::ImageScalingType::FIT);
-        image->setShrink(0.0f);
+        image->setShrink(1.0f);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
-        card->addView(image);
+        imageHolder->addView(image);
+        card->addView(imageHolder);
     }
     else
     {
