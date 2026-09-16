@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
+#include <sys/stat.h>
 
 namespace
 {
