@@ -48,15 +48,6 @@ jobs:
             exit 1
           fi
 
-      - name: Add Borealis FILL scaling for fixed poster slots
-        run: |
-          set -eux
-          python3 switch/tools/patch_borealis_image_measure.py
-          grep -q 'FILL,' switch/borealis/library/include/borealis/views/image.hpp
-          grep -q '{ "fill", ImageScalingType::FILL }' switch/borealis/library/lib/views/image.cpp
-          grep -q 'case ImageScalingType::FILL:' switch/borealis/library/lib/views/image.cpp
-          grep -q 'ImageScalingType::CROP || this->scalingType == ImageScalingType::FILL' switch/borealis/library/lib/views/image.cpp
-
       - name: Test AniList parser on host
         run: |
           set -eux
