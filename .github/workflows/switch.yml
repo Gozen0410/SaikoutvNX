@@ -48,6 +48,13 @@ jobs:
             exit 1
           fi
 
+      - name: Fix Borealis CROP measurement for fixed poster slots
+        run: |
+          set -eux
+          python3 switch/tools/patch_borealis_image_measure.py
+          grep -q 'else if (type == ImageScalingType::CROP)' switch/borealis/library/lib/views/image.cpp
+          test "$(grep -c 'else if (type == ImageScalingType::CROP)' switch/borealis/library/lib/views/image.cpp)" -eq 2
+
       - name: Test AniList parser on host
         run: |
           set -eux
