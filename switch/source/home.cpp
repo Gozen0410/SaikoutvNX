@@ -17,8 +17,9 @@ static std::string compactTitle(const std::string& title)
 static brls::Box* makeCard(const AnimeSummary& anime)
 {
     brls::Box* card = new brls::Box(brls::Axis::COLUMN);
+    // Keep the card close to AniList's portrait cover ratio (~2:3).
     card->setWidth(170);
-    card->setHeight(265);
+    card->setHeight(305);
     card->setMargins(4, 6, 4, 0);
     card->setFocusable(true);
     card->setHighlightPadding(5.0f);
@@ -28,7 +29,7 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     if (!imagePath.empty())
     {
         brls::Image* image = new brls::Image();
-        image->setDimensions(162, 210);
+        image->setDimensions(162, 243);
         image->setScalingType(brls::ImageScalingType::CROP);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
@@ -39,7 +40,7 @@ static brls::Box* makeCard(const AnimeSummary& anime)
         brls::Label* missing = new brls::Label();
         missing->setText("Cover unavailable");
         missing->setFontSize(13);
-        missing->setMargins(4, 70, 4, 0);
+        missing->setMargins(4, 90, 4, 0);
         missing->setFocusable(false);
         card->addView(missing);
     }
