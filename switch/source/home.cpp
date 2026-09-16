@@ -32,26 +32,14 @@ static brls::Box* makeCard(const AnimeSummary& anime)
     const std::string imagePath = ensureAnimeCoverCached(anime);
     if (!imagePath.empty())
     {
-        // Use an explicit image view size and disable flex shrinking so the
-        // loaded texture's intrinsic dimensions cannot change the card layout.
-        auto* imageFrame = new brls::Box(brls::Axis::COLUMN);
-        imageFrame->setWidth(170.0f);
-        imageFrame->setHeight(243.0f);
-        imageFrame->setGrow(0.0f);
-        imageFrame->setShrink(0.0f);
-        imageFrame->setAlignItems(brls::AlignItems::CENTER);
-        imageFrame->setJustifyContent(brls::JustifyContent::CENTER);
-        imageFrame->setFocusable(false);
-
+        // Diagnostic baseline: give Borealis the downloaded image with no
+        // explicit dimensions, scaling mode, alignment, frame, or flex sizing.
+        // This lets the source texture's native dimensions determine the image
+        // view so we can observe its raw behavior before adding adjustments.
         auto* image = new brls::Image();
-        image->setDimensions(162.0f, 243.0f);
-        image->setShrink(0.0f);
-        image->setScalingType(brls::ImageScalingType::FILL);
-        image->setImageAlign(brls::ImageAlignment::CENTER);
         image->setImageFromFile(imagePath);
         image->setFocusable(false);
-        imageFrame->addView(image);
-        card->addView(imageFrame);
+        card->addView(image);
     }
     else
     {
