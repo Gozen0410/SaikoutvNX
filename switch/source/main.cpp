@@ -7,18 +7,15 @@
 
 static constexpr const char* kAppDir = "sdmc:/switch/SaikouTV";
 static constexpr const char* kAppLogPath = "sdmc:/switch/SaikouTV/saikou_debug.log";
-static constexpr const char* kSwitchLogPath = "sdmc:/switch/saikou_debug.log";
-static FILE* g_logs[2] = {nullptr, nullptr};
+static FILE* g_log = nullptr;
 
 static void log_stage(const char* stage)
 {
-    for (FILE* log : g_logs)
-    {
-        if (!log)
-            continue;
-        std::fprintf(log, "[Saikou] %s\n", stage);
-        std::fflush(log);
-    }
+    if (!g_log)
+        return;
+
+    std::fprintf(g_log, "[Saikou] %s\n", stage);
+    std::fflush(g_log);
 }
 
 static void open_debug_logs()
@@ -27,22 +24,17 @@ static void open_debug_logs()
     mkdir("sdmc:/switch", 0777);
     mkdir(kAppDir, 0777);
 
-    g_logs[0] = std::fopen(kAppLogPath, "w");
-    g_logs[1] = std::fopen(kSwitchLogPath, "w");
+    g_log = std::fopen(kAppLogPath, "w");
     log_stage("entered main");
-    log_stage(g_logs[0] ? "app-folder log opened" : "app-folder log could not be opened");
-    log_stage(g_logs[1] ? "switch-folder log opened" : "switch-folder log could not be opened");
+    log_stage(g_log ? "app-folder log opened" : "app-folder log could not be opened");
 }
 
 static void close_debug_logs()
 {
-    for (FILE*& log : g_logs)
+    if (g_log)
     {
-        if (log)
-        {
-            std::fclose(log);
-            log = nullptr;
-        }
+        std::fclose(g_log);
+        g_log = nullptr;
     }
 }
 
