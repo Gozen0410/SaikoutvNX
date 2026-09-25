@@ -55,15 +55,28 @@ class HomeActivity : public brls::Activity
 {
 public:
     brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }
+
     brls::View* createContentView() override
     {
-        log_stage("BEFORE XML createContentView");
-        brls::View* view = brls::View::createFromXMLResource("activity/main.xml");
-        log_stage(view ? "AFTER XML createContentView OK" : "AFTER XML createContentView NULL");
-        return view;
+        log_stage("BEFORE BOOT SHELL CONSTRUCTION");
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        root->setPadding(40, 40, 40, 40);
+
+        brls::Label* title = new brls::Label();
+        title->setText("Saikou Switch");
+        title->setFontSize(32);
+        root->addView(title);
+
+        brls::Label* status = new brls::Label();
+        status->setText("UI foundation booted");
+        status->setFontSize(20);
+        status->setMargins(0, 18, 0, 0);
+        root->addView(status);
+
+        log_stage("BOOT SHELL CONSTRUCTED");
+        return root;
     }
 };
-
 struct ApiResult
 {
     std::string status;
@@ -582,101 +595,40 @@ int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
+
     fsdevMountSdmc();
     ensure_app_dirs();
     g_log = std::fopen(kLogPath, "w");
+
     log_stage("entered main");
     brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
     log_stage("logger configured");
+
     Result romfsRc = romfsInit();
     log_stage(R_SUCCEEDED(romfsRc) ? "romfsInit OK" : "romfsInit FAILED");
-    log_stage("closing Saikou log before Borealis init");
-    if (g_log) { std::fclose(g_log); g_log = nullptr; }
-    if (!brls::Application::init()) return EXIT_FAILURE;
+
+    if (!brls::Application::init())
+    {
+        log_stage("Application::init FAILED");
+        return EXIT_FAILURE;
+    }
     log_stage("Application::init OK");
+
     brls::Application::createWindow("Saikou Switch");
     log_stage("Borealis window created");
     brls::Application::setGlobalQuit(false);
+
     log_stage("BEFORE HomeActivity construction");
     HomeActivity* activity = new HomeActivity();
     log_stage("AFTER HomeActivity construction");
-    log_stage("BEFORE pushActivity(home) WITH NORMAL FOCUS");
+
     brls::Application::pushActivity(activity);
-    log_stage("AFTER pushActivity(home) WITH NORMAL FOCUS");
-    brls::View* root = activity->getContentView();
-    log_stage(root ? "ROOT VIEW VALID AFTER PUSH" : "ROOT VIEW NULL AFTER PUSH");
-    brls::TabFrame* tabFrame = dynamic_cast<brls::TabFrame*>(root);
-    log_stage(tabFrame ? "TABFRAME PUBLIC API TARGET VALID" : "TABFRAME PUBLIC API TARGET NULL");
-    if (tabFrame)
-    {
-        const char* homePath = "romfs:/xml/activity/home.xml";
-        log_stage("BEFORE HOME RESOURCE PREFLIGHT");
-        FILE* homeFile = std::fopen(homePath, "rb");
-        if (!homeFile)
-            log_stage("HOME RESOURCE PREFLIGHT OPEN FAILED");
-        else
-        {
-            log_stage("HOME RESOURCE PREFLIGHT OPEN OK");
-            std::fseek(homeFile, 0, SEEK_END);
-            long fileSize = std::ftell(homeFile);
-            std::fseek(homeFile, 0, SEEK_SET);
-            if (fileSize <= 0 || fileSize > 1024 * 1024)
-            {
-                std::fclose(homeFile);
-                log_stage("HOME RESOURCE PREFLIGHT INVALID SIZE");
-            }
-            else
-            {
-                std::string xml(static_cast<size_t>(fileSize), '\0');
-                size_t readSize = std::fread(xml.data(), 1, xml.size(), homeFile);
-                std::fclose(homeFile);
-                if (readSize != xml.size())
-                    log_stage("HOME RESOURCE PREFLIGHT READ FAILED");
-                else
-                {
-                    log_stage("HOME RESOURCE PREFLIGHT READ OK");
-                    log_stage("BEFORE HOME XML STRING INFLATION");
-                    brls::View* homeContent = brls::View::createFromXMLString(xml);
-                    log_stage(homeContent ? "HOME XML STRING RETURNED VIEW" : "HOME XML STRING RETURNED NULL");
-                    if (homeContent)
-                    {
-                        log_stage("BEFORE API PROBE");
-                        ApiResult api = run_api_probe();
-                        log_stage("AFTER API PROBE");
-                        brls::Box* homeBox = dynamic_cast<brls::Box*>(homeContent);
-                        if (homeBox)
-                        {
-                            homeBox->setFocusable(true);
-                            brls::Label* status = new brls::Label();
-                            status->setText(api.status);
-                            status->setFontSize(16);
-                            homeBox->addView(status);
-                            log_stage("API STATUS LABEL ATTACHED");
-                            if (!api.response.empty()) render_trending(homeBox, api.response);
-                        }
-                        else
-                            log_stage("HOME ROOT IS NOT BOX");
-                        log_stage("BEFORE PUBLIC TABFRAME CONTENT SET");
-                        tabFrame->setTabContent(homeContent);
-                        log_stage("AFTER PUBLIC TABFRAME CONTENT SET");
-                        homeContent = nullptr;
-                    }
-                }
-            }
-        }
-    }
-    log_stage("AFTER HOME CONTENT ATTACHMENT PATH");
-    int loopCount = 0;
+    log_stage("AFTER pushActivity");
+
     while (brls::Application::mainLoop())
     {
-        ++loopCount;
-        if (loopCount <= 5)
-        {
-            char marker[64];
-            std::snprintf(marker, sizeof(marker), "mainLoop returned true #%d", loopCount);
-            log_stage(marker);
-        }
     }
+
     log_stage("mainLoop returned false");
     romfsExit();
     return EXIT_SUCCESS;
