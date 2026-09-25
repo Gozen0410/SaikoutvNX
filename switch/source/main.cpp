@@ -54,7 +54,6 @@ static size_t file_write_callback(char* ptr, size_t size, size_t nmemb, void* us
 class HomeActivity : public brls::Activity
 {
 public:
-    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }
     brls::View* createContentView() override
     {
         log_stage("BEFORE XML createContentView");
@@ -640,22 +639,10 @@ int main(int argc, char* argv[])
                     log_stage(homeContent ? "HOME XML STRING RETURNED VIEW" : "HOME XML STRING RETURNED NULL");
                     if (homeContent)
                     {
-                        log_stage("BEFORE API PROBE");
-                        ApiResult api = run_api_probe();
-                        log_stage("AFTER API PROBE");
+                        log_stage("SKIPPING API - STATIC UI ONLY");
                         brls::Box* homeBox = dynamic_cast<brls::Box*>(homeContent);
                         if (homeBox)
-                        {
                             homeBox->setFocusable(true);
-                            brls::Label* status = new brls::Label();
-                            status->setText(api.status);
-                            status->setFontSize(16);
-                            homeBox->addView(status);
-                            log_stage("API STATUS LABEL ATTACHED");
-                            if (!api.response.empty()) render_trending(homeBox, api.response);
-                        }
-                        else
-                            log_stage("HOME ROOT IS NOT BOX");
                         log_stage("BEFORE PUBLIC TABFRAME CONTENT SET");
                         tabFrame->setTabContent(homeContent);
                         log_stage("AFTER PUBLIC TABFRAME CONTENT SET");
