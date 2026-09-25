@@ -21,10 +21,6 @@ set(PROJECT_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/borealis/resources")
 
 add_subdirectory(${BOREALIS_LIBRARY} borealis)
 
-find_package(PkgConfig REQUIRED)
-set(PKG_CONFIG_USE_STATIC_LIBS ON)
-pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
-
 file(GLOB_RECURSE MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp)
 program_target(${PROJECT_NAME} "${MAIN_SRC}")
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17)
@@ -48,11 +44,6 @@ target_link_options(${PROJECT_NAME} PRIVATE -Wl,--gc-sections)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     borealis
-    PkgConfig::CURL
-    mbedtls
-    mbedx509
-    mbedcrypto
-    z
     ${APP_PLATFORM_LIB})
 
 if (PLATFORM_SWITCH)
