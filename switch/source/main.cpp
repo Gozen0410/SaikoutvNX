@@ -69,7 +69,7 @@ public:
         if (g_drawProbeFrames < 3)
         {
             char marker[96];
-            std::snprintf(marker, sizeof(marker), "DrawProbeView draw called #%d", ++g_drawProbeFrames);
+            std::snprintf(marker, sizeof(marker), "DrawProbeView #%d bounds=%.0f,%.0f %.0fx%.0f", ++g_drawProbeFrames, x, y, width, height);
             log_stage(marker);
         }
 
