@@ -58,22 +58,84 @@ public:
 
     brls::View* createContentView() override
     {
-        log_stage("BEFORE BOOT SHELL CONSTRUCTION");
+        log_stage("BUILDING PLACEHOLDER UI");
+
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
-        root->setPadding(40, 40, 40, 40);
+        root->setPadding(28, 28, 28, 28);
 
-        brls::Label* title = new brls::Label();
-        title->setText("Saikou Switch");
-        title->setFontSize(32);
-        root->addView(title);
+        // Top navigation: intentionally text-only for the first UI milestone.
+        brls::Box* nav = new brls::Box(brls::Axis::ROW);
+        nav->setHeight(54);
+        nav->setShrink(0.0f);
+        nav->setGrow(0.0f);
 
-        brls::Label* status = new brls::Label();
-        status->setText("UI foundation booted");
-        status->setFontSize(20);
-        status->setMargins(0, 18, 0, 0);
-        root->addView(status);
+        const char* labels[] = {
+            "Continue Watching",
+            "Trending",
+            "Library",
+            "Search",
+            "Settings"
+        };
 
-        log_stage("BOOT SHELL CONSTRUCTED");
+        for (const char* text : labels)
+        {
+            brls::Label* item = new brls::Label();
+            item->setText(text);
+            item->setFontSize(17);
+            item->setMargins(0, 0, 24, 0);
+            item->setFocusable(true);
+            item->registerAction("Select", brls::BUTTON_A, [text](brls::View*) {
+                char marker[96];
+                std::snprintf(marker, sizeof(marker), "NAV SELECTED: %s", text);
+                log_stage(marker);
+                return true;
+            });
+            nav->addView(item);
+        }
+
+        root->addView(nav);
+
+        brls::Separator* separator = new brls::Separator();
+        separator->setMargins(0, 8, 0, 18);
+        root->addView(separator);
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("Trending");
+        heading->setFontSize(26);
+        heading->setMargins(0, 0, 0, 14);
+        root->addView(heading);
+
+        brls::Box* cards = new brls::Box(brls::Axis::ROW);
+        cards->setHeight(250);
+        cards->setShrink(0.0f);
+        cards->setGrow(0.0f);
+
+        for (int i = 1; i <= 6; ++i)
+        {
+            brls::Box* card = new brls::Box(brls::Axis::COLUMN);
+            card->setWidth(145);
+            card->setHeight(225);
+            card->setShrink(0.0f);
+            card->setGrow(0.0f);
+            card->setMargins(0, 0, 12, 0);
+            card->setFocusable(true);
+            card->setHighlightPadding(5.0f);
+            card->setCornerRadius(5.0f);
+
+            brls::Label* cardLabel = new brls::Label();
+            std::string placeholder = "CARD " + std::to_string(i);
+            cardLabel->setText(placeholder);
+            cardLabel->setFontSize(20);
+            cardLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+            cardLabel->setVerticalAlign(brls::VerticalAlign::CENTER);
+            card->addView(cardLabel);
+
+            cards->addView(card);
+        }
+
+        root->addView(cards);
+
+        log_stage("PLACEHOLDER UI CONSTRUCTED");
         return root;
     }
 };
