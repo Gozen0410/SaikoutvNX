@@ -33,12 +33,22 @@ jobs:
           test -f library/include/borealis/views/tab_frame.hpp
           ! grep -q 'setTabContent' library/include/borealis/views/tab_frame.hpp
 
+      - name: Install Borealis GLFW/OpenGL dependencies
+        run: |
+          set -eux
+          dkp-pacman -S --needed --noconfirm switch-glfw switch-mesa switch-libdrm_nouveau switch-pkg-config
+
       - name: Configure and build
         working-directory: switch
         run: |
           set -eux
           rm -rf cmake-build
-          cmake -S . -B cmake-build             -DPLATFORM_SWITCH=ON             -DUSE_DEKO3D=ON             -DUSE_GLFW=OFF             -DUSE_SDL2=OFF             -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B cmake-build \
+            -DPLATFORM_SWITCH=ON \
+            -DUSE_DEKO3D=OFF \
+            -DUSE_GLFW=ON \
+            -DUSE_SDL2=OFF \
+            -DCMAKE_BUILD_TYPE=Release
           cmake --build cmake-build --target SaikouSwitch.nro -j2
           test -s cmake-build/SaikouSwitch.nro
           ls -lh cmake-build/SaikouSwitch.nro cmake-build/SaikouSwitch.elf cmake-build/SaikouSwitch.nacp
