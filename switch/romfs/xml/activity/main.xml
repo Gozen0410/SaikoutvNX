@@ -5,6 +5,6 @@
         <brls:Label id="nav/library" width="auto" height="auto" text="Library" fontSize="23" marginRight="34" />
         <brls:Label id="nav/settings" width="auto" height="auto" text="Settings" fontSize="23" />
     </brls:Box>
-    <brls:Separator />
+    <brls:Box width="auto" height="2" marginTop="4" marginBottom="4" />
     <brls:Box id="home/content" width="auto" height="auto" axis="column" marginTop="18" />
 </brls:Box>
