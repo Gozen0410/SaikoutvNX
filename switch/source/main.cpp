@@ -39,6 +39,48 @@ static void close_debug_logs()
     }
 }
 
+static int g_drawProbeFrames = 0;
+
+class DrawProbeView final : public brls::Box
+{
+public:
+    DrawProbeView()
+        : brls::Box(brls::Axis::COLUMN)
+    {
+        setWidth(560.0f);
+        setHeight(112.0f);
+        setPadding(20.0f);
+        setMarginBottom(10.0f);
+        setCornerRadius(10.0f);
+        setBackgroundColor(nvgRGB(24, 220, 174));
+
+        auto* label = new brls::Label();
+        label->setText("DRAW PROBE - Borealis content view");
+        label->setFontSize(20.0f);
+        label->setTextColor(nvgRGB(8, 24, 24));
+        addView(label);
+    }
+
+    void draw(NVGcontext* vg, float x, float y, float width, float height, brls::Style style,
+        brls::FrameContext* ctx) override
+    {
+        brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+        if (g_drawProbeFrames < 3)
+        {
+            char marker[96];
+            std::snprintf(marker, sizeof(marker), "DrawProbeView draw called #%d", ++g_drawProbeFrames);
+            log_stage(marker);
+        }
+
+        // This vivid marker bypasses the XML layout and Label renderer.
+        nvgBeginPath(vg);
+        nvgRect(vg, x + width - 64.0f, y + 36.0f, 28.0f, 28.0f);
+        nvgFillColor(vg, nvgRGB(255, 0, 190));
+        nvgFill(vg);
+    }
+};
+
 static brls::View* create_xml_failure_view()
 {
     log_stage("creating visible XML-failure fallback");
@@ -79,6 +121,15 @@ public:
         else
         {
             g_homeView = view;
+            if (auto* rootBox = dynamic_cast<brls::Box*>(view))
+            {
+                rootBox->addView(new DrawProbeView(), 0);
+                log_stage("programmatic draw probe attached");
+            }
+            else
+            {
+                log_stage("Home root is not a Box; draw probe not attached");
+            }
             view->setDimensions(brls::Application::contentWidth, brls::Application::contentHeight);
             view->setBackgroundColor(nvgRGB(16, 20, 29));
 
