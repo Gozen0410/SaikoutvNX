@@ -180,14 +180,19 @@ int main(int argc, char* argv[])
     brls::Application::setGlobalQuit(true);
 
     log_stage("before pushActivity");
-    brls::Application::pushActivity(new HomeActivity());
+    brls::Application::pushActivity(new HomeActivity(), brls::TransitionAnimation::NONE);
     log_stage("pushActivity returned");
     if (g_homeView)
     {
-        char marker[96];
-        std::snprintf(marker, sizeof(marker), "Home root after push: %.0fx%.0f",
-            g_homeView->getWidth(), g_homeView->getHeight());
+        const auto stack = brls::Application::getActivitiesStack();
+        char marker[192];
+        std::snprintf(marker, sizeof(marker),
+            "Home after push: size=%.0fx%.0f alpha=%.2f hidden=%d activities=%zu",
+            g_homeView->getWidth(), g_homeView->getHeight(), g_homeView->getAlpha(),
+            g_homeView->isHidden() ? 1 : 0, stack.size());
         log_stage(marker);
+        g_homeView->setAlpha(1.0f);
+        log_stage("Home root alpha forced to 1");
     }
 
     log_stage("before first mainLoop frame");
