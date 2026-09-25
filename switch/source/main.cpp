@@ -8,6 +8,7 @@
 static constexpr const char* kAppDir = "sdmc:/switch/SaikouTV";
 static constexpr const char* kAppLogPath = "sdmc:/switch/SaikouTV/saikou_debug.log";
 static FILE* g_log = nullptr;
+static brls::View* g_homeView = nullptr;
 
 static void log_stage(const char* stage)
 {
@@ -72,7 +73,22 @@ public:
         brls::View* view = brls::View::createFromXMLResource("activity/main.xml");
         log_stage(view ? "Home XML returned a view" : "Home XML returned NULL");
         if (!view)
+        {
             view = create_xml_failure_view();
+        }
+        else
+        {
+            g_homeView = view;
+            view->setDimensions(brls::Application::contentWidth, brls::Application::contentHeight);
+            view->setBackgroundColor(nvgRGB(16, 20, 29));
+
+            char marker[160];
+            std::snprintf(marker, sizeof(marker),
+                "Home root before push: %.0fx%.0f; app content: %.0fx%.0f",
+                view->getWidth(), view->getHeight(),
+                brls::Application::contentWidth, brls::Application::contentHeight);
+            log_stage(marker);
+        }
         return view;
     }
 
@@ -166,6 +182,13 @@ int main(int argc, char* argv[])
     log_stage("before pushActivity");
     brls::Application::pushActivity(new HomeActivity());
     log_stage("pushActivity returned");
+    if (g_homeView)
+    {
+        char marker[96];
+        std::snprintf(marker, sizeof(marker), "Home root after push: %.0fx%.0f",
+            g_homeView->getWidth(), g_homeView->getHeight());
+        log_stage(marker);
+    }
 
     log_stage("before first mainLoop frame");
     int frameCount = 0;
