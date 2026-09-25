@@ -177,6 +177,8 @@ int main(int argc, char* argv[])
     log_stage("before createWindow");
     brls::Application::createWindow("SaikouTV NX");
     log_stage("createWindow returned");
+    brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
+    log_stage("Borealis dark theme applied");
     brls::Application::setGlobalQuit(true);
 
     log_stage("before pushActivity");
