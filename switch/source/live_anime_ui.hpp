@@ -1059,6 +1059,9 @@ private:
     }
 };
 
+class PairingActivity;
+static PairingActivity* g_pairingActivity = nullptr;
+
 class PairingActivity : public brls::Activity
 {
 public:
@@ -1288,8 +1291,8 @@ private:
     }
 };
 
-static PairingActivity* g_pairingActivity = nullptr;
-static class LibraryActivity* g_libraryActivity = nullptr;
+class LibraryActivity;
+static LibraryActivity* g_libraryActivity = nullptr;
 
 class LibraryActivity : public brls::Activity
 {
