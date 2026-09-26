@@ -41,6 +41,39 @@ static void close_debug_logs()
     }
 }
 
+static void log_controller_edges()
+{
+    struct WatchedButton
+    {
+        brls::ControllerButton button;
+        const char* name;
+    };
+
+    static constexpr WatchedButton watchedButtons[] = {
+        {brls::BUTTON_START, "Plus / START"},
+        {brls::BUTTON_NAV_UP, "D-pad NAV UP"},
+        {brls::BUTTON_NAV_RIGHT, "D-pad NAV RIGHT"},
+        {brls::BUTTON_NAV_DOWN, "D-pad NAV DOWN"},
+        {brls::BUTTON_NAV_LEFT, "D-pad NAV LEFT"},
+        {brls::BUTTON_A, "A"},
+        {brls::BUTTON_B, "B"},
+    };
+    static bool previous[brls::_BUTTON_MAX] = {};
+
+    const brls::ControllerState& state = brls::Application::getControllerState();
+    for (const WatchedButton& watched : watchedButtons)
+    {
+        const bool pressed = state.buttons[watched.button];
+        if (pressed && !previous[watched.button])
+        {
+            char marker[128];
+            std::snprintf(marker, sizeof(marker), "Borealis received controller button: %s", watched.name);
+            log_stage(marker);
+        }
+        previous[watched.button] = pressed;
+    }
+}
+
 static brls::View* create_xml_failure_view()
 {
     log_stage("creating visible XML-failure fallback");
@@ -138,25 +171,66 @@ int main(int argc, char* argv[])
     }
     log_stage("Borealis Application::init OK");
 
-    char fontMarker[160];
-    std::snprintf(fontMarker, sizeof(fontMarker),
-        "Bundled font file=%d; fonts: regular=%d zh-Hans=%d default=%d",
-        access("romfs:/font/switch_font.ttf", F_OK) == 0 ? 1 : 0,
-        brls::Application::getFont(brls::FONT_REGULAR),
-        brls::Application::getFont(brls::FONT_CHINESE_SIMPLIFIED),
-        brls::Application::getDefaultFont());
-    log_stage(fontMarker);
-
     log_stage("before createWindow");
     brls::Application::createWindow("SaikouTV NX");
     log_stage("createWindow returned");
+
+#ifdef __SWITCH__
+    NVGcontext* vg = brls::Application::getNVGContext();
+    const int regularFont = brls::Application::getFont(brls::FONT_REGULAR);
+    int fallbackCount = 0;
+    const std::string fallbackFonts[] = {
+        brls::FONT_CHINESE_SIMPLIFIED,
+        brls::FONT_CHINESE_SIMPLIFIED_EXT,
+        brls::FONT_CHINESE_TRADITIONAL,
+        brls::FONT_KOREAN_REGULAR,
+        brls::FONT_SWITCH_ICONS,
+        brls::FONT_MATERIAL_ICONS,
+    };
+    for (const std::string& name : fallbackFonts)
+    {
+        const int fallbackFont = brls::Application::getFont(name);
+        if (vg && regularFont >= 0 && fallbackFont >= 0)
+        {
+            nvgAddFallbackFontId(vg, regularFont, fallbackFont);
+            ++fallbackCount;
+        }
+    }
+#endif
+
+    char fontMarker[192];
+    std::snprintf(fontMarker, sizeof(fontMarker),
+        "After createWindow: bundled font file=%d; regular=%d zh-Hans=%d default=%d fallbacks=%d",
+        access("romfs:/font/switch_font.ttf", F_OK) == 0 ? 1 : 0,
+        brls::Application::getFont(brls::FONT_REGULAR),
+        brls::Application::getFont(brls::FONT_CHINESE_SIMPLIFIED),
+        brls::Application::getDefaultFont(),
+#ifdef __SWITCH__
+        fallbackCount
+#else
+        0
+#endif
+    );
+    log_stage(fontMarker);
     brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
     log_stage("Borealis dark theme applied");
+    brls::Application::setGlobalQuit(true);
+    log_stage("Borealis built-in + exit action enabled");
     log_stage("before pushActivity");
     brls::Application::pushActivity(new HomeActivity(), brls::TransitionAnimation::NONE);
     log_stage("pushActivity returned");
-    brls::Application::setGlobalQuit(true);
-    log_stage("Borealis built-in + exit action enabled");
+
+    if (brls::View* focus = brls::Application::getCurrentFocus())
+    {
+        const std::string description = focus->describe();
+        char marker[256];
+        std::snprintf(marker, sizeof(marker), "Borealis initial focus after push: %.220s", description.c_str());
+        log_stage(marker);
+    }
+    else
+    {
+        log_stage("Borealis initial focus after push: NULL");
+    }
     if (g_homeView)
     {
         const auto stack = brls::Application::getActivitiesStack();
@@ -172,8 +246,31 @@ int main(int argc, char* argv[])
 
     log_stage("before first mainLoop frame");
     int frameCount = 0;
-    while (brls::Application::mainLoop())
+    bool focusLoggedAfterFirstFrame = false;
+    while (true)
     {
+        const bool running = brls::Application::mainLoop();
+        log_controller_edges();
+
+        if (!focusLoggedAfterFirstFrame)
+        {
+            focusLoggedAfterFirstFrame = true;
+            if (brls::View* focus = brls::Application::getCurrentFocus())
+            {
+                const std::string description = focus->describe();
+                char marker[256];
+                std::snprintf(marker, sizeof(marker), "Borealis focus after first frame: %.220s", description.c_str());
+                log_stage(marker);
+            }
+            else
+            {
+                log_stage("Borealis focus after first frame: NULL");
+            }
+        }
+
+        if (!running)
+            break;
+
         ++frameCount;
         if (frameCount <= 10)
         {
