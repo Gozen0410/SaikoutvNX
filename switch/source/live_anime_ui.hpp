@@ -23,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 
 static void log_stage(const char* stage);
@@ -868,11 +869,11 @@ static std::string compact_card_title(const std::string& title)
     return title.substr(0, cut) + "...";
 }
 
-static brls::Box* make_anime_card(const SaikouAnime& anime)
+static brls::Box* make_anime_card(const SaikouAnime& anime, const std::string& subtitle = std::string())
 {
     brls::Box* card = new brls::Box(brls::Axis::COLUMN);
     card->setWidth(184.0f);
-    card->setHeight(244.0f);
+    card->setHeight(subtitle.empty() ? 244.0f : 260.0f);
     card->setPadding(6.0f);
     card->setMargins(3, 7, 3, 0);
     card->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -884,10 +885,11 @@ static brls::Box* make_anime_card(const SaikouAnime& anime)
 
     const std::string imagePath = anime.posterPath.empty() ? cached_cover_path(anime.id) : anime.posterPath;
     struct stat st;
+    const float posterHeight = subtitle.empty() ? 168.0f : 148.0f;
     if (stat(imagePath.c_str(), &st) == 0 && st.st_size > 256)
     {
         brls::Image* poster = new brls::Image();
-        poster->setDimensions(168.0f, 168.0f);
+        poster->setDimensions(168.0f, posterHeight);
         poster->setScalingType(brls::ImageScalingType::FIT);
         poster->setImageFromFile(imagePath);
         poster->setFocusable(false);
@@ -896,7 +898,7 @@ static brls::Box* make_anime_card(const SaikouAnime& anime)
     else
     {
         brls::Box* placeholder = new brls::Box();
-        placeholder->setDimensions(168.0f, 168.0f);
+        placeholder->setDimensions(168.0f, posterHeight);
         placeholder->setBackgroundColor(nvgRGB(35, 45, 62));
         placeholder->setFocusable(false);
         card->addView(placeholder);
@@ -918,6 +920,17 @@ static brls::Box* make_anime_card(const SaikouAnime& anime)
     title->setMargins(0, 2, 0, 0);
     title->setFocusable(false);
     card->addView(title);
+
+    if (!subtitle.empty())
+    {
+        brls::Label* progress = new brls::Label();
+        progress->setText(subtitle);
+        progress->setFontSize(11.0f);
+        progress->setTextColor(nvgRGB(174, 184, 200));
+        progress->setMargins(0, 2, 0, 0);
+        progress->setFocusable(false);
+        card->addView(progress);
+    }
 
     card->registerAction("Open anime details", brls::BUTTON_A, [anime](brls::View*) {
         open_anime_details(anime);
@@ -1046,37 +1059,523 @@ private:
     }
 };
 
-class LibraryActivity : public brls::Activity
+class PairingActivity : public brls::Activity
 {
 public:
+    PairingActivity() { g_pairingActivity = this; }
+
+    ~PairingActivity() override
+    {
+        m_stopping.store(true, std::memory_order_release);
+        if (m_listener.joinable())
+            m_listener.join();
+        if (g_pairingActivity == this)
+            g_pairingActivity = nullptr;
+    }
+
     brls::View* createContentView() override
     {
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
-        root->setPadding(32.0f);
+        root->setPadding(34.0f);
         root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("LINK YOUR ANILIST ACCOUNT");
+        heading->setFontSize(28.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        brls::Label* instructions = new brls::Label();
+        instructions->setText(
+            "On your phone, open Saikou > Settings > TV Login. Enter the final number shown below. "
+            "Keep both devices on the same Wi-Fi network and leave this screen open.");
+        instructions->setFontSize(17.0f);
+        instructions->setLineHeight(24.0f);
+        instructions->setTextColor(nvgRGB(174, 184, 200));
+        instructions->setMargins(0, 14, 0, 0);
+        root->addView(instructions);
+
+        m_address = get_switch_local_ip();
+        brls::Label* address = new brls::Label();
+        if (m_address.empty())
+            address->setText("Switch network address unavailable. Connect to Wi-Fi, then reopen this screen.");
+        else
+            address->setText("Switch IP: " + m_address + "    Phone code: " + m_address.substr(m_address.find_last_of('.') + 1));
+        address->setFontSize(25.0f);
+        address->setTextColor(nvgRGB(97, 207, 226));
+        address->setMargins(0, 24, 0, 0);
+        root->addView(address);
+
+        m_statusLabel = new brls::Label();
+        m_statusLabel->setText("Starting the phone link listener...");
+        m_statusLabel->setFontSize(17.0f);
+        m_statusLabel->setTextColor(nvgRGB(220, 228, 240));
+        m_statusLabel->setMargins(0, 18, 0, 0);
+        root->addView(m_statusLabel);
+
+        brls::Label* back = new brls::Label();
+        back->setText("Press B to return to Settings.");
+        back->setFontSize(14.0f);
+        back->setTextColor(nvgRGB(135, 147, 166));
+        back->setMargins(0, 24, 0, 0);
+        root->addView(back);
+        return root;
+    }
+
+    void onContentAvailable() override
+    {
+        if (!m_listener.joinable())
+            m_listener = std::thread([this] { listen_for_phone(); });
+    }
+
+    void tick()
+    {
+        if (!m_statusLabel) return;
+        const std::string message = status_snapshot();
+        if (message != m_lastDisplayed)
+        {
+            m_statusLabel->setText(message);
+            m_lastDisplayed = message;
+        }
+    }
+
+private:
+    static constexpr int kPairingPort = 2413;
+    std::atomic<bool> m_stopping{ false };
+    std::thread m_listener;
+    std::mutex m_statusMutex;
+    std::string m_status = "Starting the phone link listener...";
+    std::string m_lastDisplayed;
+    std::string m_address;
+    brls::Label* m_statusLabel = nullptr;
+
+    void set_status(const std::string& message)
+    {
+        std::lock_guard<std::mutex> lock(m_statusMutex);
+        m_status = message;
+    }
+
+    std::string status_snapshot()
+    {
+        std::lock_guard<std::mutex> lock(m_statusMutex);
+        return m_status;
+    }
+
+    bool same_local_subnet(const sockaddr_in& peer) const
+    {
+        if (m_address.empty())
+            return true;
+
+        in_addr local{};
+        if (inet_pton(AF_INET, m_address.c_str(), &local) != 1)
+            return false;
+        const uint32_t peerHost = ntohl(peer.sin_addr.s_addr);
+        const uint32_t localHost = ntohl(local.s_addr);
+        return (peerHost & 0xFFFFFF00u) == (localHost & 0xFFFFFF00u);
+    }
+
+    bool receive_token(int client, std::string& token)
+    {
+        char buffer[256];
+        while (!m_stopping.load(std::memory_order_acquire) && token.size() < 4096)
+        {
+            fd_set readSet;
+            FD_ZERO(&readSet);
+            FD_SET(client, &readSet);
+            timeval timeout{ 1, 0 };
+            const int ready = select(client + 1, &readSet, nullptr, nullptr, &timeout);
+            if (ready == 0)
+                continue;
+            if (ready < 0)
+                return false;
+
+            const ssize_t received = recv(client, buffer, sizeof(buffer), 0);
+            if (received <= 0)
+                return !token.empty();
+
+            for (ssize_t i = 0; i < received; ++i)
+            {
+                if (buffer[i] == '\n')
+                    return !token.empty();
+                if (buffer[i] != '\r')
+                    token.push_back(buffer[i]);
+            }
+        }
+        return !token.empty();
+    }
+
+    void listen_for_phone()
+    {
+        const int server = socket(AF_INET, SOCK_STREAM, 0);
+        if (server < 0)
+        {
+            set_status("Could not create the local pairing socket.");
+            return;
+        }
+
+        int reuse = 1;
+        setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(kPairingPort);
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0 ||
+            listen(server, 1) < 0)
+        {
+            close(server);
+            set_status("Could not listen on port 2413. Close another Saikou TV session and retry.");
+            return;
+        }
+
+        set_status(m_address.empty()
+            ? "Listening on port 2413. Connect the Switch to the same Wi-Fi as your phone."
+            : "Waiting for the phone app on port 2413...");
+        while (!m_stopping.load(std::memory_order_acquire))
+        {
+            fd_set readSet;
+            FD_ZERO(&readSet);
+            FD_SET(server, &readSet);
+            timeval timeout{ 0, 500000 };
+            const int ready = select(server + 1, &readSet, nullptr, nullptr, &timeout);
+            if (ready == 0)
+                continue;
+            if (ready < 0)
+                break;
+
+            sockaddr_in peer{};
+            socklen_t peerLength = sizeof(peer);
+            const int client = accept(server, reinterpret_cast<sockaddr*>(&peer), &peerLength);
+            if (client < 0)
+                continue;
+            if (!same_local_subnet(peer))
+            {
+                close(client);
+                set_status("Pairing request was outside the Switch's local /24 network. Still waiting...");
+                continue;
+            }
+
+            std::string token;
+            if (!receive_token(client, token))
+            {
+                close(client);
+                if (!m_stopping.load(std::memory_order_acquire))
+                    set_status("No token was received. Keep this screen open and try again from the phone.");
+                continue;
+            }
+            close(client);
+
+            set_status("Phone connected. Verifying the AniList account...");
+            std::string username;
+            if (!validate_anilist_token(token, username))
+            {
+                if (!m_stopping.load(std::memory_order_acquire))
+                    set_status("AniList rejected that token. Check the phone login and try again.");
+                continue;
+            }
+            if (!save_anilist_token(token))
+            {
+                set_status("Account verified, but the token could not be saved to the SD card.");
+                continue;
+            }
+
+            log_stage("ANILIST PHONE PAIRING SUCCEEDED");
+            set_status("Linked to @" + username + ". Return to Settings or open Library.");
+            break;
+        }
+        close(server);
+    }
+};
+
+static PairingActivity* g_pairingActivity = nullptr;
+static class LibraryActivity* g_libraryActivity = nullptr;
+
+class LibraryActivity : public brls::Activity
+{
+public:
+    LibraryActivity() { g_libraryActivity = this; }
+
+    ~LibraryActivity() override
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+        if (g_libraryActivity == this)
+            g_libraryActivity = nullptr;
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
+        frame->setWidthPercentage(100.0f);
+        frame->setHeightPercentage(100.0f);
+        frame->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        m_content = new brls::Box(brls::Axis::COLUMN);
+        m_content->setWidthPercentage(100.0f);
+        m_content->setPadding(30.0f);
+        frame->setContentView(m_content);
 
         brls::Label* heading = new brls::Label();
         heading->setText("ANILIST LIBRARY");
         heading->setFontSize(28.0f);
-        root->addView(heading);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        m_content->addView(heading);
 
-        brls::Label* note = new brls::Label();
-        note->setText("Your Planning, Watching, Completed, Paused, Dropped, and Rewatching lists will appear here after account linking.");
-        note->setFontSize(17.0f);
-        note->setLineHeight(23.0f);
-        note->setMargins(0, 12, 0, 0);
-        note->setTextColor(nvgRGB(174, 184, 200));
-        root->addView(note);
+        m_statusLabel = new brls::Label();
+        m_statusLabel->setText("Loading your AniList account...");
+        m_statusLabel->setFontSize(15.0f);
+        m_statusLabel->setTextColor(nvgRGB(174, 184, 200));
+        m_statusLabel->setMargins(0, 6, 0, 0);
+        m_content->addView(m_statusLabel);
 
-        brls::Label* status = new brls::Label();
-        status->setText("AniList phone pairing is the next account integration.");
-        status->setFontSize(16.0f);
-        status->setMargins(0, 20, 0, 0);
-        root->addView(status);
-        return root;
+        m_pairButton = new brls::Label();
+        m_pairButton->setText("LINK ANILIST FROM PHONE");
+        m_pairButton->setFontSize(16.0f);
+        m_pairButton->setTextColor(nvgRGB(97, 207, 226));
+        m_pairButton->setMargins(0, 8, 0, 0);
+        m_pairButton->setFocusable(true);
+        m_pairButton->registerAction("Pair AniList account", brls::BUTTON_A, [](brls::View*) {
+            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            return true;
+        });
+        m_content->addView(m_pairButton);
+
+        brls::Box* categories = new brls::Box(brls::Axis::ROW);
+        categories->setHeight(40.0f);
+        categories->setMargins(0, 18, 0, 0);
+        static const char* names[] = { "WATCHING", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REWATCHING" };
+        for (size_t i = 0; i < 6; ++i)
+        {
+            brls::Label* tab = new brls::Label();
+            tab->setText(names[i]);
+            tab->setFontSize(13.0f);
+            tab->setMargins(0, 10, 0, 0);
+            tab->setBackgroundColor(i == m_category ? nvgRGB(36, 70, 86) : nvgRGB(27, 34, 48));
+            tab->setFocusable(true);
+            tab->registerAction("Show AniList category", brls::BUTTON_A, [this, i](brls::View*) {
+                if (!m_loading && m_loaded && m_category != i)
+                {
+                    m_category = i;
+                    m_page = 0;
+                    update_category_styles();
+                    start_page_load();
+                }
+                return true;
+            });
+            m_categories[i] = tab;
+            categories->addView(tab);
+        }
+        m_content->addView(categories);
+
+        brls::Box* pageControls = new brls::Box(brls::Axis::ROW);
+        pageControls->setHeight(38.0f);
+        pageControls->setMargins(0, 8, 0, 0);
+
+        m_previous = new brls::Label();
+        m_previous->setText("PREVIOUS");
+        m_previous->setFontSize(13.0f);
+        m_previous->setFocusable(true);
+        m_previous->registerAction("Previous library page", brls::BUTTON_A, [this](brls::View*) {
+            if (!m_loading && m_loaded && m_page > 0)
+            {
+                --m_page;
+                start_page_load();
+            }
+            return true;
+        });
+        pageControls->addView(m_previous);
+
+        m_pageInfo = new brls::Label();
+        m_pageInfo->setFontSize(13.0f);
+        m_pageInfo->setTextColor(nvgRGB(174, 184, 200));
+        m_pageInfo->setMargins(0, 28, 0, 0);
+        pageControls->addView(m_pageInfo);
+
+        m_next = new brls::Label();
+        m_next->setText("NEXT");
+        m_next->setFontSize(13.0f);
+        m_next->setMargins(0, 28, 0, 0);
+        m_next->setFocusable(true);
+        m_next->registerAction("Next library page", brls::BUTTON_A, [this](brls::View*) {
+            if (!m_loading && m_loaded && m_page + 1 < page_count())
+            {
+                ++m_page;
+                start_page_load();
+            }
+            return true;
+        });
+        pageControls->addView(m_next);
+        m_content->addView(pageControls);
+
+        m_cards = new brls::Box(brls::Axis::COLUMN);
+        m_cards->setWidthPercentage(100.0f);
+        m_cards->setMargins(0, 8, 0, 0);
+        m_content->addView(m_cards);
+        return frame;
     }
+
+    void onContentAvailable() override
+    {
+        m_token = load_anilist_token();
+        if (m_token.empty())
+        {
+            m_loading = false;
+            m_loaded = true;
+            m_loadStatus = "No AniList account is linked. Pair with the Saikou phone app above.";
+            m_statusLabel->setText(m_loadStatus);
+            return;
+        }
+
+        m_loading = true;
+        m_worker = std::thread([this] {
+            m_entries = fetch_anilist_library(m_token, m_username, m_loadStatus);
+            m_pageItems = collect_page_items();
+            download_page_images(m_pageItems);
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
+
+    void tick()
+    {
+        if (!m_ready.load(std::memory_order_acquire))
+            return;
+        if (m_worker.joinable())
+            m_worker.join();
+        m_loading = false;
+        m_loaded = true;
+        update_category_styles();
+        render_page();
+        m_ready.store(false, std::memory_order_release);
+    }
+
+private:
+    static constexpr size_t kPageSize = 6;
+    static const char* const kStatuses[6];
+
+    brls::Box* m_content = nullptr;
+    brls::Label* m_statusLabel = nullptr;
+    brls::Label* m_pairButton = nullptr;
+    brls::Label* m_categories[6]{};
+    brls::Label* m_previous = nullptr;
+    brls::Label* m_next = nullptr;
+    brls::Label* m_pageInfo = nullptr;
+    brls::Box* m_cards = nullptr;
+    std::string m_token;
+    std::string m_username;
+    std::string m_loadStatus;
+    std::vector<AniListEntry> m_entries;
+    std::vector<AniListEntry> m_pageItems;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    bool m_loading = false;
+    bool m_loaded = false;
+    size_t m_category = 0;
+    size_t m_page = 0;
+
+    std::vector<AniListEntry> collect_page_items() const
+    {
+        std::vector<AniListEntry> matching;
+        for (const AniListEntry& entry : m_entries)
+            if (entry.listStatus == kStatuses[m_category])
+                matching.push_back(entry);
+        const size_t start = m_page * kPageSize;
+        std::vector<AniListEntry> page;
+        for (size_t i = start; i < matching.size() && i < start + kPageSize; ++i)
+            page.push_back(matching[i]);
+        return page;
+    }
+
+    void download_page_images(std::vector<AniListEntry>& page)
+    {
+        for (AniListEntry& entry : page)
+        {
+            entry.anime.posterPath = cached_cover_path(entry.anime.id);
+            if (!download_image(entry.anime.coverUrl, entry.anime.posterPath))
+                entry.anime.posterPath.clear();
+        }
+    }
+
+    size_t page_count() const
+    {
+        size_t count = 0;
+        for (const AniListEntry& entry : m_entries)
+            if (entry.listStatus == kStatuses[m_category]) ++count;
+        const size_t pages = (count + kPageSize - 1) / kPageSize;
+        return pages == 0 ? 1 : pages;
+    }
+
+    void start_page_load()
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+        m_loading = true;
+        m_statusLabel->setText("Loading " + std::string(kStatuses[m_category]) + " list...");
+        m_worker = std::thread([this] {
+            m_pageItems = collect_page_items();
+            download_page_images(m_pageItems);
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
+
+    void update_category_styles()
+    {
+        for (size_t i = 0; i < 6; ++i)
+            if (m_categories[i])
+                m_categories[i]->setBackgroundColor(i == m_category ? nvgRGB(36, 70, 86) : nvgRGB(27, 34, 48));
+    }
+
+    void render_page()
+    {
+        clear_box(m_cards);
+        for (const AniListEntry& entry : m_pageItems)
+        {
+            std::string progress;
+            if (entry.listStatus == "CURRENT" || entry.listStatus == "REPEATING")
+            {
+                progress = "Episode " + std::to_string(entry.progress);
+                if (entry.anime.episodes > 0)
+                    progress += " / " + std::to_string(entry.anime.episodes);
+            }
+            else
+            {
+                progress = entry.listName.empty() ? entry.listStatus : entry.listName;
+            }
+
+            brls::Box* row = nullptr;
+            if (m_cards->getChildren().empty() || dynamic_cast<brls::Box*>(m_cards->getChildren().back())->getChildren().size() >= 6)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(1160.0f);
+                row->setHeight(268.0f);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_cards->addView(row);
+            }
+            else
+                row = dynamic_cast<brls::Box*>(m_cards->getChildren().back());
+            row->addView(make_anime_card(entry.anime, progress));
+        }
+        if (m_pageItems.empty())
+        {
+            brls::Label* empty = new brls::Label();
+            empty->setText("No anime is saved in this list.");
+            empty->setFontSize(17.0f);
+            empty->setTextColor(nvgRGB(174, 184, 200));
+            m_cards->addView(empty);
+        }
+
+        m_pageInfo->setText("Page " + std::to_string(m_page + 1) + " / " + std::to_string(page_count()));
+        m_previous->setText(m_page > 0 ? "PREVIOUS" : " ");
+        m_next->setText(m_page + 1 < page_count() ? "NEXT" : " ");
+        std::string status = m_loadStatus;
+        if (!m_username.empty())
+            status += "  |  @" + m_username;
+        m_statusLabel->setText(status);
+    }
+};
+
+const char* const LibraryActivity::kStatuses[6] = {
+    "CURRENT", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REPEATING"
 };
 
 class SettingsActivity : public brls::Activity
@@ -1096,11 +1595,27 @@ public:
         root->addView(heading);
 
         brls::Label* account = new brls::Label();
-        account->setText("AniList account pairing with the phone app is being built.");
+        account->setText(load_anilist_token().empty()
+            ? "No AniList account linked."
+            : "AniList account token is saved on this Switch.");
         account->setFontSize(16.0f);
         account->setTextColor(nvgRGB(174, 184, 200));
         account->setMargins(0, 7, 0, 0);
         root->addView(account);
+
+        brls::Label* pair = new brls::Label();
+        pair->setText(load_anilist_token().empty()
+            ? "LINK ANILIST FROM PHONE"
+            : "PAIR AGAIN / CHANGE ANILIST ACCOUNT");
+        pair->setFontSize(17.0f);
+        pair->setTextColor(nvgRGB(97, 207, 226));
+        pair->setMargins(0, 12, 0, 0);
+        pair->setFocusable(true);
+        pair->registerAction("Link AniList account", brls::BUTTON_A, [](brls::View*) {
+            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            return true;
+        });
+        root->addView(pair);
 
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
@@ -1165,6 +1680,19 @@ public:
     {
         m_status = dynamic_cast<brls::Label*>(getView("home/status"));
         m_cards = dynamic_cast<brls::Box*>(getView("home/trending/cards"));
+        m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
+        m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
+        m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
+
+        if (m_continueBox)
+            m_continueBox->registerAction("Resume watching", brls::BUTTON_A, [this](brls::View*) {
+                if (m_hasContinue)
+                    open_anime_details(m_continueAnime);
+                else
+                    brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+                return true;
+            });
+
         connect_navigation("nav/search", "Open Search", [] {
             brls::Application::pushActivity(new SearchActivity(), brls::TransitionAnimation::SLIDE_LEFT);
         });
@@ -1186,6 +1714,29 @@ public:
                     if (!download_image(anime.coverUrl, anime.posterPath))
                         anime.posterPath.clear();
                 }
+
+                const std::string token = load_anilist_token();
+                if (token.empty())
+                    m_continueMessage = "Link an AniList account in Settings to sync your list.";
+                else
+                {
+                    std::string username;
+                    std::string libraryStatus;
+                    const std::vector<AniListEntry> library = fetch_anilist_library(token, username, libraryStatus);
+                    for (const AniListEntry& entry : library)
+                    {
+                        if (entry.listStatus == "CURRENT")
+                        {
+                            m_continueAnime = entry.anime;
+                            m_continueProgress = entry.progress;
+                            m_hasContinue = true;
+                            break;
+                        }
+                    }
+                    m_continueMessage = m_hasContinue
+                        ? ("Episode " + std::to_string(m_continueProgress) + " in progress  |  @" + username)
+                        : ("@" + username + " is linked. No Watching entries yet.");
+                }
                 m_ready.store(true, std::memory_order_release);
             });
         }
@@ -1201,18 +1752,29 @@ public:
         render_anime_cards(m_cards, m_items);
         if (m_status)
             m_status->setText(m_loadStatus + " — select a poster for details.");
+        if (m_continueTitle)
+            m_continueTitle->setText(m_hasContinue ? m_continueAnime.title : "Nothing to resume yet");
+        if (m_continueSubtitle)
+            m_continueSubtitle->setText(m_continueMessage);
         m_attached = true;
-        log_stage("ANIList HOME CARDS ATTACHED");
+        log_stage("ANILIST HOME CARDS ATTACHED");
     }
 
 private:
     std::thread m_loader;
     std::atomic<bool> m_ready{ false };
     bool m_attached = false;
+    bool m_hasContinue = false;
+    int m_continueProgress = 0;
     std::vector<SaikouAnime> m_items;
+    SaikouAnime m_continueAnime;
     std::string m_loadStatus;
+    std::string m_continueMessage;
     brls::Label* m_status = nullptr;
     brls::Box* m_cards = nullptr;
+    brls::Box* m_continueBox = nullptr;
+    brls::Label* m_continueTitle = nullptr;
+    brls::Label* m_continueSubtitle = nullptr;
 
     void connect_navigation(const char* id, const char* name, std::function<void()> callback)
     {
@@ -1224,3 +1786,11 @@ private:
         });
     }
 };
+
+static void tick_live_ui_activities()
+{
+    if (g_pairingActivity)
+        g_pairingActivity->tick();
+    if (g_libraryActivity)
+        g_libraryActivity->tick();
+}
