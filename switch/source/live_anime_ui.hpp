@@ -3,6 +3,7 @@
 #include <borealis.hpp>
 #include <curl/curl.h>
 #include <switch/applets/swkbd.h>
+#include <switch/services/nifm.h>
 #include <switch.h>
 #include "api_sources.hpp"
 
@@ -19,6 +20,9 @@
 #include <utility>
 #include <vector>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
 #include <unistd.h>
 
 static void log_stage(const char* stage);
@@ -40,6 +44,7 @@ struct SaikouAnime
 static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true };
 static int g_selectedApiSource = 0;
 static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini";
+static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
 
 static bool ensure_network_ready()
@@ -75,7 +80,7 @@ static size_t append_http_data(char* data, size_t size, size_t count, void* user
 }
 
 static bool http_request(const std::string& url, const std::string* postBody,
-    std::string& response, long timeoutSeconds = 10)
+    std::string& response, long timeoutSeconds = 10, const std::string* bearerToken = nullptr)
 {
     if (!ensure_network_ready() || !ensure_curl_ready())
         return false;
@@ -88,6 +93,11 @@ static bool http_request(const std::string& url, const std::string* postBody,
     headers = curl_slist_append(headers, "Accept: application/json");
     if (postBody)
         headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (bearerToken && !bearerToken->empty())
+    {
+        const std::string authHeader = "Authorization: Bearer " + *bearerToken;
+        headers = curl_slist_append(headers, authHeader.c_str());
+    }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
@@ -269,6 +279,64 @@ static std::string json_object_field(const std::string& json, const std::string&
     return std::string();
 }
 
+static std::string json_array_field(const std::string& json, const std::string& key)
+{
+    size_t p = json_field_value(json, key);
+    if (p >= json.size() || json[p] != '[') return std::string();
+    const size_t start = p++;
+    int depth = 1;
+    bool inString = false;
+    bool escaped = false;
+    for (; p < json.size(); ++p)
+    {
+        const char c = json[p];
+        if (inString)
+        {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') inString = true;
+        else if (c == '[') ++depth;
+        else if (c == ']' && --depth == 0) return json.substr(start, p - start + 1);
+    }
+    return std::string();
+}
+
+static std::vector<std::string> json_object_array(const std::string& array)
+{
+    std::vector<std::string> objects;
+    size_t p = array.find('[');
+    if (p == std::string::npos) return objects;
+    for (++p; p < array.size();)
+    {
+        while (p < array.size() && (std::isspace(static_cast<unsigned char>(array[p])) || array[p] == ',')) ++p;
+        if (p >= array.size() || array[p] == ']') break;
+        if (array[p] != '{') { ++p; continue; }
+        const size_t start = p++;
+        int depth = 1;
+        bool inString = false;
+        bool escaped = false;
+        for (; p < array.size() && depth > 0; ++p)
+        {
+            const char c = array[p];
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') inString = true;
+            else if (c == '{') ++depth;
+            else if (c == '}') --depth;
+        }
+        if (depth == 0) objects.push_back(array.substr(start, p - start));
+    }
+    return objects;
+}
+
 static std::string json_quote(const std::string& text)
 {
     std::string out = "\"";
@@ -388,6 +456,147 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
     log_stage(marker);
     status = result.empty() ? "AniList returned no anime." : "Live AniList data";
     return result;
+}
+
+struct AniListEntry
+{
+    std::string listStatus;
+    std::string listName;
+    int progress = 0;
+    SaikouAnime anime;
+};
+
+static std::vector<AniListEntry> parse_anilist_library(const std::string& response)
+{
+    std::vector<AniListEntry> entries;
+    const std::string collection = json_object_field(response, "MediaListCollection");
+    const std::string lists = json_array_field(collection, "lists");
+    for (const std::string& list : json_object_array(lists))
+    {
+        const std::string listStatus = json_string_field(list, "status");
+        const std::string listName = json_string_field(list, "name");
+        const std::string entryArray = json_array_field(list, "entries");
+        for (const std::string& entry : json_object_array(entryArray))
+        {
+            const std::string media = json_object_field(entry, "media");
+            SaikouAnime anime = parse_anime_object(media);
+            if (anime.id <= 0) continue;
+            AniListEntry item;
+            item.listStatus = json_string_field(entry, "status");
+            if (item.listStatus.empty()) item.listStatus = listStatus;
+            item.listName = listName;
+            item.progress = json_int_field(entry, "progress");
+            item.anime = anime;
+            entries.push_back(item);
+        }
+    }
+    return entries;
+}
+
+static std::string load_anilist_token()
+{
+    FILE* file = std::fopen(kAniListTokenPath, "r");
+    if (!file) return std::string();
+    char buffer[4096] = {};
+    const size_t count = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+    std::fclose(file);
+    std::string token(buffer, count);
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+        token.pop_back();
+    size_t first = 0;
+    while (first < token.size() && std::isspace(static_cast<unsigned char>(token[first]))) ++first;
+    if (first > 0) token.erase(0, first);
+    return token;
+}
+
+static bool save_anilist_token(const std::string& token)
+{
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/SaikouTV", 0777);
+    FILE* file = std::fopen(kAniListTokenPath, "w");
+    if (!file) return false;
+    const bool ok = std::fwrite(token.data(), 1, token.size(), file) == token.size();
+    std::fclose(file);
+    return ok;
+}
+
+static bool validate_anilist_token(const std::string& token, std::string& username)
+{
+    const std::string query = "{ Viewer { id name } }";
+    const std::string body = "{\"query\":" + json_quote(query) + "}";
+    std::string response;
+    if (!http_request("https://graphql.anilist.co", &body, response, 12, &token))
+        return false;
+    if (json_int_field(response, "id") <= 0)
+        return false;
+    username = json_string_field(response, "name");
+    return !username.empty();
+}
+
+static std::vector<AniListEntry> fetch_anilist_library(
+    const std::string& token, std::string& username, std::string& status)
+{
+    const std::string viewerQuery = "{ Viewer { id name } }";
+    const std::string viewerBody = "{\"query\":" + json_quote(viewerQuery) + "}";
+    std::string viewerResponse;
+    if (!http_request("https://graphql.anilist.co", &viewerBody, viewerResponse, 12, &token))
+    {
+        status = "Could not load the AniList account.";
+        return {};
+    }
+
+    const int userId = json_int_field(viewerResponse, "id");
+    username = json_string_field(viewerResponse, "name");
+    if (userId <= 0 || username.empty())
+    {
+        status = "AniList rejected the saved account token. Pair again in Settings.";
+        return {};
+    }
+
+    const std::string query =
+        "query ($userId: Int) { MediaListCollection(userId: $userId, type: ANIME) { "
+        "lists { name status entries { status progress media { "
+        "id title { english romaji native userPreferred } "
+        "coverImage { large extraLarge } bannerImage averageScore format status episodes "
+        "description(asHtml: false) "
+        "} } } } }";
+    const std::string body = "{\"query\":" + json_quote(query) +
+        ",\"variables\":{\"userId\":" + std::to_string(userId) + "}}";
+    std::string response;
+    if (!http_request("https://graphql.anilist.co", &body, response, 12, &token))
+    {
+        status = "Could not load AniList lists.";
+        return {};
+    }
+
+    std::vector<AniListEntry> result = parse_anilist_library(response);
+    status = result.empty()
+        ? (username + " is linked. No anime entries were returned.")
+        : (username + " — " + std::to_string(result.size()) + " anime entries");
+    return result;
+}
+
+static std::string get_switch_local_ip()
+{
+    if (!ensure_network_ready()) return std::string();
+    Result nifmResult = nifmInitialize(NifmServiceType_User);
+    const bool nifmOwned = R_SUCCEEDED(nifmResult);
+    if (!nifmOwned && nifmResult != MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized))
+        return std::string();
+
+    u32 rawAddress = 0;
+    const Result ipResult = nifmGetCurrentIpAddress(&rawAddress);
+    if (nifmOwned) nifmExit();
+    if (R_FAILED(ipResult)) return std::string();
+
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&rawAddress);
+    if (bytes[0] == 0 || bytes[0] == 127)
+        return std::string();
+    char ip[32];
+    std::snprintf(ip, sizeof(ip), "%u.%u.%u.%u",
+        static_cast<unsigned int>(bytes[0]), static_cast<unsigned int>(bytes[1]),
+        static_cast<unsigned int>(bytes[2]), static_cast<unsigned int>(bytes[3]));
+    return ip;
 }
 
 static std::string cached_cover_path(int id)
