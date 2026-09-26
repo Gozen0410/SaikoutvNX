@@ -99,45 +99,7 @@ static brls::View* create_xml_failure_view()
     return root;
 }
 
-class HomeActivity : public brls::Activity
-{
-public:
-    brls::View* createContentView() override
-    {
-        log_stage("HomeActivity createContentView START");
-        brls::View* view = brls::View::createFromXMLResource("activity/main.xml");
-        log_stage(view ? "Home XML returned a view" : "Home XML returned NULL");
-        if (!view)
-        {
-            view = create_xml_failure_view();
-        }
-        else
-        {
-            g_homeView = view;
-            view->setDimensions(brls::Application::contentWidth, brls::Application::contentHeight);
-            view->setBackgroundColor(nvgRGB(16, 20, 29));
-
-            char marker[160];
-            std::snprintf(marker, sizeof(marker),
-                "Home root before push: %.0fx%.0f; app content: %.0fx%.0f",
-                view->getWidth(), view->getHeight(),
-                brls::Application::contentWidth, brls::Application::contentHeight);
-            log_stage(marker);
-        }
-        return view;
-    }
-
-    void onContentAvailable() override
-    {
-        log_stage("HomeActivity onContentAvailable START");
-        log_stage(getView("home/status")
-            ? "home/status view found"
-            : "home/status view ID missing");
-        log_stage("Using Borealis built-in focus and controller navigation");
-        log_stage("HomeActivity onContentAvailable COMPLETE");
-    }
-
-};
+#include "live_anime_ui.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -145,6 +107,7 @@ int main(int argc, char* argv[])
     (void)argv;
 
     open_debug_logs();
+    initialize_source_settings();
 
     log_stage("before romfsInit");
     Result romfsResult = romfsInit();
@@ -220,7 +183,8 @@ int main(int argc, char* argv[])
     brls::Application::setGlobalQuit(true);
     log_stage("Borealis built-in + exit action enabled");
     log_stage("before pushActivity");
-    brls::Application::pushActivity(new HomeActivity(), brls::TransitionAnimation::NONE);
+    HomeActivity* homeActivity = new HomeActivity();
+    brls::Application::pushActivity(homeActivity, brls::TransitionAnimation::NONE);
     log_stage("pushActivity returned");
 
     if (brls::View* focus = brls::Application::getCurrentFocus())
@@ -254,6 +218,7 @@ int main(int argc, char* argv[])
     {
         const bool running = brls::Application::mainLoop();
         log_controller_edges();
+        homeActivity->tick();
 
         if (!focusLoggedAfterFirstFrame)
         {
