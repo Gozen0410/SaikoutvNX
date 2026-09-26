@@ -50,7 +50,7 @@ jobs:
       - name: Install Borealis GLFW/OpenGL dependencies
         run: |
           set -eux
-          dkp-pacman -S --needed --noconfirm switch-glfw switch-mesa switch-libdrm_nouveau switch-pkg-config
+          dkp-pacman -S --needed --noconfirm switch-glfw switch-mesa switch-libdrm_nouveau switch-pkg-config switch-curl
 
       - name: Configure and build
         working-directory: switch
