@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static constexpr const char* kAppDir = "sdmc:/switch/SaikouTV";
 static constexpr const char* kAppLogPath = "sdmc:/switch/SaikouTV/saikou_debug.log";
@@ -165,6 +166,8 @@ int main(int argc, char* argv[])
     log_stage("romfsInit OK");
 
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
+    brls::FontLoader::USER_FONT_PATH = "romfs:/font/switch_font.ttf";
+    log_stage("Borealis bundled Switch font path set to romfs:/font/switch_font.ttf");
     log_stage("before Borealis Application::init");
     if (!brls::Application::init())
     {
@@ -177,7 +180,8 @@ int main(int argc, char* argv[])
 
     char fontMarker[160];
     std::snprintf(fontMarker, sizeof(fontMarker),
-        "Fonts: regular=%d zh-Hans=%d default=%d",
+        "Bundled font file=%d; fonts: regular=%d zh-Hans=%d default=%d",
+        access("romfs:/font/switch_font.ttf", F_OK) == 0 ? 1 : 0,
         brls::Application::getFont(brls::FONT_REGULAR),
         brls::Application::getFont(brls::FONT_CHINESE_SIMPLIFIED),
         brls::Application::getDefaultFont());
