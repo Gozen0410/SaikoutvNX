@@ -21,10 +21,6 @@ set(PROJECT_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/borealis/resources")
 
 add_subdirectory(${BOREALIS_LIBRARY} borealis)
 
-find_package(PkgConfig REQUIRED)
-set(PKG_CONFIG_USE_STATIC_LIBS ON)
-pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
-
 file(GLOB_RECURSE MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp)
 program_target(${PROJECT_NAME} "${MAIN_SRC}")
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17)
@@ -48,10 +44,7 @@ target_link_options(${PROJECT_NAME} PRIVATE -Wl,--gc-sections)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     borealis
-    PkgConfig::CURL
-    mbedtls
-    mbedx509
-    mbedcrypto
+    curl
     z
     ${APP_PLATFORM_LIB})
 
@@ -67,10 +60,12 @@ if (PLATFORM_SWITCH)
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_RESOURCES} ${SAIKOU_RESOURCES}
-        # Match the useful part of NX-torrent-player's Borealis packaging:
-        # keep system images/material/i18n, but drop demo/sample resources that
-        # only inflate the NRO and are unrelated to Saikou.
-        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/font
+        # Keep Borealis's Switch font. SwitchFontLoader expects the app's default
+        # font at romfs:/font/font.ttf; upstream stores the bundled font as
+        # switch_font.ttf, so copy it to the runtime filename in packaged ROMFS.
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SAIKOU_RESOURCES}/font/switch_font.ttf
+            ${SAIKOU_RESOURCES}/font/font.ttf
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/img/pokemon
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/xml
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/icon
