@@ -1220,13 +1220,14 @@ public:
         brls::Label* heading = new brls::Label();
         heading->setText("LINK YOUR ANILIST ACCOUNT");
         heading->setFontSize(28.0f);
+        heading->setFocusable(false);
         heading->setTextColor(nvgRGB(244, 246, 250));
         root->addView(heading);
 
         brls::Label* instructions = new brls::Label();
         instructions->setText(
-            "On your phone, open Saikou > Settings > TV Login. Enter the final number shown below. "
-            "Keep both devices on the same Wi-Fi network and leave this screen open.");
+            "Current prototype: connect both devices to the same Wi-Fi. Enter the last number of the Switch IP below "
+            "in Saikou > Settings > TV Login on your phone. The phone-generated code entered on Switch flow is not implemented yet.");
         instructions->setFontSize(17.0f);
         instructions->setLineHeight(24.0f);
         instructions->setFocusable(false);
@@ -1258,7 +1259,7 @@ public:
         brls::Label* back = new brls::Label();
         back->setText("Press B to return to Settings.");
         back->setFontSize(14.0f);
-        back->setFocusable(false);
+        back->setFocusable(true);
         back->setTextColor(nvgRGB(135, 147, 166));
         back->setMargins(0, 24, 0, 0);
         root->addView(back);
