@@ -1226,8 +1226,8 @@ public:
 
         brls::Label* instructions = new brls::Label();
         instructions->setText(
-            "Current prototype: connect both devices to the same Wi-Fi. Enter the last number of the Switch IP below "
-            "in Saikou > Settings > TV Login on your phone. The phone-generated code entered on Switch flow is not implemented yet.");
+            "Your requested flow is a 3-digit code from Saikou on your phone, entered on the Switch. "
+            "That code exchange is not implemented in this build yet. Keep both devices on the same Wi-Fi.");
         instructions->setFontSize(17.0f);
         instructions->setLineHeight(24.0f);
         instructions->setFocusable(false);
@@ -1238,10 +1238,10 @@ public:
         m_address = get_switch_local_ip();
         brls::Label* address = new brls::Label();
         if (m_address.empty())
-            address->setText("No Switch IP is available. Connect to Wi-Fi, then reopen this screen.\nThere is no code to enter on the Switch in this build.");
+            address->setText("Switch IP unavailable. Connect it to Wi-Fi.\nPhone-code pairing is not available yet.");
         else
-            address->setText("Switch IP: " + m_address + "    Phone code: " + m_address.substr(m_address.find_last_of('.') + 1) +
-                "\nEnter that final number in Saikou > Settings > TV Login on your phone.");
+            address->setText("Switch IP: " + m_address +
+                "\nThe 3-digit phone-code exchange is not available in this build.");
         address->setFontSize(25.0f);
         address->setFocusable(false);
         address->setTextColor(nvgRGB(97, 207, 226));
@@ -1372,8 +1372,8 @@ private:
         }
 
         set_status(m_address.empty()
-            ? "Listener is open, but the Switch has no network address yet."
-            : "Waiting for the phone app on port 2413...");
+            ? "Listener on port 2413; no Switch IP is available. Phone-code pairing is not ready."
+            : "Local token listener on port 2413; phone-code validation is not connected.");
         while (!m_stopping.load(std::memory_order_acquire))
         {
             fd_set readSet;
