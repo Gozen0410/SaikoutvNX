@@ -15,13 +15,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Switch networking dependency
-        run: |
-          set -eux
-          dkp-pacman -S --needed --noconfirm switch-curl
-          test -f "${DEVKITPRO}/portlibs/switch/lib/libcurl.a"
-          test -f "${DEVKITPRO}/portlibs/switch/include/curl/curl.h"
-
       - name: Fetch Borealis
         run: |
           set -eux
@@ -29,14 +22,20 @@ jobs:
           cd switch/borealis
           git fetch --depth 1 origin 5f08b286f3df737f3321d2247a6fe633fcead03c
           git checkout 5f08b286f3df737f3321d2247a6fe633fcead03c
-          cd ../..
-          rm -rf /tmp/saikou-romfs
-          cp -a switch/romfs /tmp/saikou-romfs
-          rm -rf switch/romfs
-          mkdir -p switch/romfs
-          cp -a switch/borealis/resources/. switch/romfs/
-          cp -a /tmp/saikou-romfs/. switch/romfs/
-          rm -rf /tmp/saikou-romfs
+
+      - name: Apply Switch font defaults
+        working-directory: switch/borealis
+        run: |
+          set -eux
+          app_source=library/lib/core/application.cpp
+          grep -q 'static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
+          sed -i 's/static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);/static int regular = Application::getFont(FONT_REGULAR);/' "$app_source"
+          sed -i '/static int regular = Application::getFont(FONT_REGULAR);/a\
+              if (regular == FONT_INVALID)\
+                  regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
+          grep -q 'static int regular = Application::getFont(FONT_REGULAR);' "$app_source"
+          grep -q 'if (regular == FONT_INVALID)' "$app_source"
+          grep -q 'regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
 
       - name: Verify Borealis compatibility
         working-directory: switch/borealis
@@ -48,186 +47,20 @@ jobs:
           test -f library/include/borealis/views/tab_frame.hpp
           ! grep -q 'setTabContent' library/include/borealis/views/tab_frame.hpp
 
-      - name: Apply AniList Home data source
+      - name: Install Borealis GLFW/OpenGL dependencies
         run: |
           set -eux
-          python3 -m py_compile switch/tools/apply_anilist_home.py
-          python3 switch/tools/apply_anilist_home.py
-          test -f switch/source/main.cpp
-          grep -q 'ANILIST HOME REQUEST' switch/source/main.cpp
-          grep -q 'graphql.anilist.co' switch/source/main.cpp
-          if grep -q 'miruro.zenos.my.id/trending' switch/source/main.cpp; then
-            echo 'Unexpected Miruro Home endpoint after clean AniList migration'
-            exit 1
-          fi
+          dkp-pacman -S --needed --noconfirm switch-glfw switch-mesa switch-libdrm_nouveau switch-pkg-config switch-curl
 
-      - name: Apply header Home runtime
-        run: |
-          set -eux
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('switch/source/main.cpp')
-          s = p.read_text()
-          start = s.find('int main(int argc, char* argv[])')
-          if start < 0:
-              raise SystemExit('main() start not found')
-
-          new_main = r'''int main(int argc, char* argv[])
-          {
-              (void)argc;
-              (void)argv;
-              fsdevMountSdmc();
-              ensure_app_dirs();
-              g_log = std::fopen(kLogPath, "w");
-              log_stage("entered main");
-              brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
-              log_stage("logger configured");
-
-              Result romfsRc = romfsInit();
-              log_stage(R_SUCCEEDED(romfsRc) ? "romfsInit OK" : "romfsInit FAILED");
-              log_stage("closing Saikou log before Borealis init");
-              if (g_log) { std::fclose(g_log); g_log = nullptr; }
-
-              if (!brls::Application::init()) return EXIT_FAILURE;
-              log_stage("Application::init OK");
-              brls::Application::createWindow("Saikou Switch");
-              log_stage("Borealis window created");
-              brls::Application::setGlobalQuit(false);
-
-              HomeActivity* activity = new HomeActivity();
-              log_stage("BEFORE HomeActivity construction");
-              brls::Application::pushActivity(activity);
-              log_stage("AFTER pushActivity(home)");
-
-              brls::Box* root = dynamic_cast<brls::Box*>(activity->getContentView());
-              if (!root)
-                  log_stage("ROOT VIEW IS NOT BOX");
-              else
-              {
-                  brls::Label* navHome = dynamic_cast<brls::Label*>(root->getView("nav/home"));
-                  brls::Label* navSearch = dynamic_cast<brls::Label*>(root->getView("nav/search"));
-                  brls::Label* navLibrary = dynamic_cast<brls::Label*>(root->getView("nav/library"));
-                  brls::Label* navSettings = dynamic_cast<brls::Label*>(root->getView("nav/settings"));
-                  brls::Box* content = dynamic_cast<brls::Box*>(root->getView("home/content"));
-
-                  brls::Label* navs[] = {navHome, navSearch, navLibrary, navSettings};
-                  const char* names[] = {"Home", "Search", "Library", "Settings"};
-                  for (size_t i = 0; i < 4; ++i)
-                  {
-                      if (!navs[i]) continue;
-                      navs[i]->setFocusable(true);
-                      navs[i]->setFocusSound(brls::SOUND_FOCUS_CHANGE);
-                      navs[i]->registerAction(names[i], brls::BUTTON_A, [i](brls::View*) {
-                          char marker[64];
-                          std::snprintf(marker, sizeof(marker), "HEADER TAB SELECTED %zu", i);
-                          log_stage(marker);
-                          return true;
-                      });
-                  }
-
-                  if (navHome)
-                      brls::Application::giveFocus(navHome);
-
-                  if (content)
-                  {
-                      log_stage("BEFORE API PROBE");
-                      ApiResult api = run_api_probe();
-                      log_stage("AFTER API PROBE");
-
-                      brls::Label* status = new brls::Label();
-                      status->setText(api.status);
-                      status->setFontSize(15);
-                      status->setFocusable(false);
-                      content->addView(status);
-                      log_stage("API STATUS LABEL ATTACHED");
-
-                      if (!api.response.empty())
-                          render_trending(content, api.response);
-                  }
-                  else
-                      log_stage("HOME CONTENT BOX NOT FOUND");
-              }
-
-              log_stage("AFTER HEADER HOME ATTACHMENT PATH");
-              int loopCount = 0;
-              while (brls::Application::mainLoop())
-              {
-                  ++loopCount;
-                  if (loopCount <= 5)
-                  {
-                      char marker[64];
-                      std::snprintf(marker, sizeof(marker), "mainLoop returned true #%d", loopCount);
-                      log_stage(marker);
-                  }
-              }
-
-              log_stage("mainLoop returned false");
-              romfsExit();
-              return EXIT_SUCCESS;
-          }
-          '''
-
-          p.write_text(s[:start] + new_main)
-          PY
-          grep -q 'HEADER TAB SELECTED' switch/source/main.cpp
-          grep -q 'home/content' switch/romfs/xml/activity/main.xml
-          if grep -q 'dynamic_cast<brls::TabFrame' switch/source/main.cpp; then
-            echo 'Old TabFrame Home runtime leaked into header build'
-            exit 1
-          fi
-
-      - name: Restore normal + exit behavior
-        run: |
-          set -eux
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('switch/source/main.cpp')
-          s = p.read_text()
-          stale = '    brls::View* getDefaultFocus() override { return brls::Activity::getDefaultFocus(); }\n'
-          if stale in s:
-              s = s.replace(stale, '', 1)
-          old = 'brls::Application::setGlobalQuit(false);'
-          new = 'brls::Application::setGlobalQuit(true);'
-          if old in s:
-              s = s.replace(old, new, 1)
-          if new not in s:
-              raise SystemExit('Could not restore global + exit behavior')
-          p.write_text(s)
-          PY
-          if grep -q 'getDefaultFocus() override' switch/source/main.cpp; then
-            echo 'Unsupported getDefaultFocus override remains in main.cpp'
-            exit 1
-          fi
-          grep -q 'brls::Application::setGlobalQuit(true);' switch/source/main.cpp
-
-      - name: Verify header navigation foundation
-        run: |
-          set -eux
-          test -f switch/CMakeLists.txt
-          test -f switch/romfs/xml/activity/main.xml
-          grep -q 'set(BOREALIS_LIBRARY' switch/CMakeLists.txt
-          grep -q 'add_subdirectory(${BOREALIS_LIBRARY} borealis)' switch/CMakeLists.txt
-          grep -q '<brls:Box id="home/header"' switch/romfs/xml/activity/main.xml
-          grep -q 'id="nav/home"' switch/romfs/xml/activity/main.xml
-          grep -q 'id="nav/search"' switch/romfs/xml/activity/main.xml
-          grep -q 'id="nav/library"' switch/romfs/xml/activity/main.xml
-          grep -q 'id="nav/settings"' switch/romfs/xml/activity/main.xml
-          grep -q 'id="home/content"' switch/romfs/xml/activity/main.xml
-          if grep -q '<brls:TabFrame' switch/romfs/xml/activity/main.xml; then
-            echo 'Old sidebar TabFrame layout leaked into header build'
-            exit 1
-          fi
-
-      - name: Configure and build with CMake/Borealis
+      - name: Configure and build
         working-directory: switch
         run: |
           set -eux
           rm -rf cmake-build
           cmake -S . -B cmake-build \
             -DPLATFORM_SWITCH=ON \
-            -DUSE_DEKO3D=ON \
-            -DUSE_GLFW=OFF \
+            -DUSE_DEKO3D=OFF \
+            -DUSE_GLFW=ON \
             -DUSE_SDL2=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build cmake-build --target SaikouSwitch.nro -j2

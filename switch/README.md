@@ -1,17 +1,18 @@
 # Saikou Switch
 
-This directory is the start of a native Nintendo Switch homebrew port of SaikouTV.
+This directory contains the native Nintendo Switch implementation of SaikouTV. The Android application remains maintained separately upstream; this app uses libnx and Borealis.
 
-The Android application cannot be compiled directly into an NRO because its UI, lifecycle, storage, networking and media stack depend heavily on Android/AndroidX. The Switch port therefore keeps the application goals and reusable protocol/data ideas while replacing the platform layer.
+## Current milestone: controller-first Home shell
 
-## Planned layers
+The app starts directly in a static Home screen with Continue Watching, Trending preview cards, and Latest Episodes preview cards. D-pad focus and A-button actions are wired for the navigation items and cards. Navigation destinations show a clear placeholder message until their screens are built.
 
-- `source/` — Switch-native application code
-- libnx — system, input and app lifecycle
-- deko3d — GPU/UI rendering
-- Switch-native HTTP/JSON — AniList and source APIs
-- mpv/FFmpeg integration — video playback, adapted from the known-good SwitchWave work
+The preview titles are UI sample content. No API request runs at startup, so network availability cannot block the first screen.
 
-## Milestone 0
+The GitHub Actions workflow builds the checked-in C++ and XML files as an NRO. It pins Borealis to the revision recorded in the workflow and does not rewrite application source during the build.
 
-The first target is deliberately small: produce a working `.nro`, initialize libnx, read controller input, and provide a stable application loop. Networking, AniList screens, scraping and playback will be added incrementally after that baseline works.
+## Next milestones
+
+1. Confirm the Home shell on the Switch and tune its layout.
+2. Build actual Search, Library, and Settings screens.
+3. Connect one Home row to AniList data.
+4. Add images and playback only after the UI foundation is stable.
