@@ -1104,6 +1104,17 @@ public:
 
     void tick()
     {
+        if (m_restoreGlobalQuitWhenReleased)
+        {
+            const brls::ControllerState& state = brls::Application::getControllerState();
+            if (!state.buttons[brls::BUTTON_START])
+            {
+                brls::Application::setGlobalQuit(true);
+                m_restoreGlobalQuitWhenReleased = false;
+                log_stage("SEARCH KEYBOARD GLOBAL QUIT RESTORED");
+            }
+        }
+
         if (!m_resultReady.load(std::memory_order_acquire))
             return;
         if (m_worker.joinable())
@@ -1126,6 +1137,7 @@ private:
     std::thread m_worker;
     std::atomic<bool> m_resultReady{ false };
     bool m_searching = false;
+    bool m_restoreGlobalQuitWhenReleased = false;
 
     void run_search()
     {
@@ -1147,12 +1159,24 @@ private:
         swkbdConfigMakePresetDefault(&keyboard);
         swkbdConfigSetHeaderText(&keyboard, "Search anime on AniList");
         swkbdConfigSetGuideText(&keyboard, "Type an anime title");
+        swkbdConfigSetSubText(&keyboard, "Press Search to run the query; Cancel closes the keyboard");
+        swkbdConfigSetOkButtonText(&keyboard, "Search");
+        if (!m_pendingQuery.empty())
+            swkbdConfigSetInitialText(&keyboard, m_pendingQuery.c_str());
+
+        // The system keyboard owns input while it is open. Keep Borealis from
+        // treating the same + press as the app-wide quit shortcut on return.
+        brls::Application::setGlobalQuit(false);
+        m_restoreGlobalQuitWhenReleased = true;
+        log_stage("SEARCH KEYBOARD GLOBAL QUIT DISABLED");
         char query[256] = {};
         rc = swkbdShow(&keyboard, query, sizeof(query));
         swkbdClose(&keyboard);
         if (R_FAILED(rc) || query[0] == '\0')
         {
-            log_stage("SEARCH KEYBOARD CANCELED");
+            if (m_status)
+                m_status->setText("No title entered. Press A to search, or B to leave Search.");
+            log_stage("SEARCH KEYBOARD CANCELED OR EMPTY");
             return;
         }
 
@@ -1216,6 +1240,7 @@ public:
             "Keep both devices on the same Wi-Fi network and leave this screen open.");
         instructions->setFontSize(17.0f);
         instructions->setLineHeight(24.0f);
+        instructions->setFocusable(false);
         instructions->setTextColor(nvgRGB(174, 184, 200));
         instructions->setMargins(0, 14, 0, 0);
         root->addView(instructions);
@@ -1223,10 +1248,12 @@ public:
         m_address = get_switch_local_ip();
         brls::Label* address = new brls::Label();
         if (m_address.empty())
-            address->setText("Switch network address unavailable. Connect to Wi-Fi, then reopen this screen.");
+            address->setText("No Switch IP is available. Connect to Wi-Fi, then reopen this screen.\nThere is no code to enter on the Switch in this build.");
         else
-            address->setText("Switch IP: " + m_address + "    Phone code: " + m_address.substr(m_address.find_last_of('.') + 1));
+            address->setText("Switch IP: " + m_address + "    Phone code: " + m_address.substr(m_address.find_last_of('.') + 1) +
+                "\nEnter that final number in Saikou > Settings > TV Login on your phone.");
         address->setFontSize(25.0f);
+        address->setFocusable(false);
         address->setTextColor(nvgRGB(97, 207, 226));
         address->setMargins(0, 24, 0, 0);
         root->addView(address);
@@ -1234,6 +1261,7 @@ public:
         m_statusLabel = new brls::Label();
         m_statusLabel->setText("Starting the phone link listener...");
         m_statusLabel->setFontSize(17.0f);
+        m_statusLabel->setFocusable(false);
         m_statusLabel->setTextColor(nvgRGB(220, 228, 240));
         m_statusLabel->setMargins(0, 18, 0, 0);
         root->addView(m_statusLabel);
@@ -1241,6 +1269,7 @@ public:
         brls::Label* back = new brls::Label();
         back->setText("Press B to return to Settings.");
         back->setFontSize(14.0f);
+        back->setFocusable(false);
         back->setTextColor(nvgRGB(135, 147, 166));
         back->setMargins(0, 24, 0, 0);
         root->addView(back);
@@ -1353,7 +1382,7 @@ private:
         }
 
         set_status(m_address.empty()
-            ? "Listening on port 2413. Connect the Switch to the same Wi-Fi as your phone."
+            ? "Listener is open, but the Switch has no network address yet."
             : "Waiting for the phone app on port 2413...");
         while (!m_stopping.load(std::memory_order_acquire))
         {
