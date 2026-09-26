@@ -715,16 +715,13 @@ public:
     brls::View* createContentView() override
     {
         log_stage("ACTIVITY OPEN: anime details");
-        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
-        frame->setWidthPercentage(100.0f);
-        frame->setHeightPercentage(100.0f);
-        frame->setBackgroundColor(nvgRGB(16, 20, 29));
-
         m_content = new brls::Box(brls::Axis::COLUMN);
         m_content->setWidthPercentage(100.0f);
+        m_content->setHeightPercentage(100.0f);
         m_content->setPadding(30.0f);
-        frame->setContentView(m_content);
-        return frame;
+        m_content->setBackgroundColor(nvgRGB(16, 20, 29));
+        log_stage("DETAIL VIEW BUILT");
+        return m_content;
     }
 
     void onContentAvailable() override
@@ -912,6 +909,7 @@ static void open_anime_details(const SaikouAnime& anime)
     brls::Application::pushActivity(
         new AnimeDetailsActivity(anime),
         brls::TransitionAnimation::SLIDE_LEFT);
+    log_stage("DETAIL ACTIVITY PUSH RETURNED");
 }
 
 static std::string compact_card_title(const std::string& title)
@@ -1039,15 +1037,11 @@ public:
     brls::View* createContentView() override
     {
         log_stage("ACTIVITY OPEN: Search");
-        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
-        frame->setWidthPercentage(100.0f);
-        frame->setHeightPercentage(100.0f);
-        frame->setBackgroundColor(nvgRGB(16, 20, 29));
-
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
-        frame->setContentView(root);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
 
         brls::Label* heading = new brls::Label();
         heading->setText("SEARCH ANIME");
@@ -1086,7 +1080,8 @@ public:
         m_results->setWidthPercentage(100.0f);
         m_results->setMargins(0, 12, 0, 0);
         root->addView(m_results);
-        return frame;
+        log_stage("SEARCH VIEW BUILT");
+        return root;
     }
 
     void tick()
@@ -1416,15 +1411,12 @@ public:
 
     brls::View* createContentView() override
     {
-        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
-        frame->setWidthPercentage(100.0f);
-        frame->setHeightPercentage(100.0f);
-        frame->setBackgroundColor(nvgRGB(16, 20, 29));
-
+        log_stage("LIBRARY VIEW CREATE START");
         m_content = new brls::Box(brls::Axis::COLUMN);
         m_content->setWidthPercentage(100.0f);
+        m_content->setHeightPercentage(100.0f);
         m_content->setPadding(30.0f);
-        frame->setContentView(m_content);
+        m_content->setBackgroundColor(nvgRGB(16, 20, 29));
 
         brls::Label* heading = new brls::Label();
         heading->setText("ANILIST LIBRARY");
@@ -1523,7 +1515,8 @@ public:
         m_cards->setWidthPercentage(100.0f);
         m_cards->setMargins(0, 8, 0, 0);
         m_content->addView(m_cards);
-        return frame;
+        log_stage("LIBRARY VIEW BUILT");
+        return m_content;
     }
 
     void onContentAvailable() override
@@ -1536,7 +1529,9 @@ public:
             m_loading = false;
             m_loaded = true;
             m_loadStatus = "No AniList account is linked. Pair with the Saikou phone app above.";
-            m_statusLabel->setText(m_loadStatus);
+            if (m_statusLabel)
+                m_statusLabel->setText(m_loadStatus);
+            log_stage("LIBRARY CONTENT READY WITHOUT ACCOUNT");
             return;
         }
 
@@ -1698,15 +1693,11 @@ public:
     brls::View* createContentView() override
     {
         log_stage("ACTIVITY OPEN: Settings");
-        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
-        frame->setWidthPercentage(100.0f);
-        frame->setHeightPercentage(100.0f);
-        frame->setBackgroundColor(nvgRGB(16, 20, 29));
-
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
-        frame->setContentView(root);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
 
         brls::Label* heading = new brls::Label();
         heading->setText("SETTINGS");
@@ -1745,7 +1736,8 @@ public:
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
             root->addView(make_toggle(i));
-        return frame;
+        log_stage("SETTINGS VIEW BUILT");
+        return root;
     }
 
 private:
@@ -1844,6 +1836,7 @@ public:
                     open_anime_details(m_continueAnime);
                 else
                     brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+                log_stage("CONTINUE ACTION PUSH RETURNED");
                 return true;
             });
 
@@ -1949,6 +1942,11 @@ private:
             std::snprintf(marker, sizeof(marker), "NAV ACTION: %s", name);
             log_stage(marker);
             callback();
+            char completeMarker[128];
+            const auto stack = brls::Application::getActivitiesStack();
+            std::snprintf(completeMarker, sizeof(completeMarker),
+                "NAV ACTION COMPLETE: %s stack=%zu", name, stack.size());
+            log_stage(completeMarker);
             return true;
         });
     }
