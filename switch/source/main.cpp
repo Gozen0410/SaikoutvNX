@@ -97,53 +97,13 @@ public:
     void onContentAvailable() override
     {
         log_stage("HomeActivity onContentAvailable START");
-        status = dynamic_cast<brls::Label*>(getView("home/status"));
-        if (!status)
-        {
-            log_stage("home/status view ID missing");
-            return;
-        }
-        log_stage("home/status view found");
-
-        bindAction("nav/home", "Open Home", "Home is ready. Choose a card with A.");
-        bindAction("nav/search", "Open Search", "Search is the next screen to build.");
-        bindAction("nav/library", "Open Library", "Your library screen is the next milestone.");
-        bindAction("nav/settings", "Open Settings", "Settings will be added after the Home shell.");
-
-        bindAction("home/card/continue", "Select", "Continue Watching is ready for saved progress.");
-        bindAction("home/card/frieren", "Select", "Selected preview: Frieren: Beyond Journey's End.");
-        bindAction("home/card/apothecary", "Select", "Selected preview: The Apothecary Diaries.");
-        bindAction("home/card/solo", "Select", "Selected preview: Solo Leveling.");
-        bindAction("home/card/one-piece", "Select", "Selected preview: One Piece.");
-        bindAction("home/episode/frieren", "Select", "Selected preview episode: Frieren, episode 28.");
-        bindAction("home/episode/one-piece", "Select", "Selected preview episode: One Piece, episode 1106.");
-        bindAction("home/episode/solo", "Select", "Selected preview episode: Solo Leveling, episode 12.");
+        log_stage(getView("home/status")
+            ? "home/status view found"
+            : "home/status view ID missing");
+        log_stage("Using Borealis built-in focus and controller navigation");
         log_stage("HomeActivity onContentAvailable COMPLETE");
     }
 
-private:
-    brls::Label* status = nullptr;
-
-    void bindAction(const char* viewId, const char* hint, const char* message)
-    {
-        brls::View* view = getView(viewId);
-        if (!view)
-        {
-            char marker[128];
-            std::snprintf(marker, sizeof(marker), "view ID missing: %s", viewId);
-            log_stage(marker);
-            return;
-        }
-
-        view->setFocusable(true);
-        view->registerAction(hint, brls::BUTTON_A, [label = status, message = std::string(message), viewId](brls::View*) {
-            label->setText(message);
-            char marker[128];
-            std::snprintf(marker, sizeof(marker), "A action selected: %s", viewId);
-            log_stage(marker);
-            return true;
-        });
-    }
 };
 
 int main(int argc, char* argv[])
@@ -192,11 +152,11 @@ int main(int argc, char* argv[])
     log_stage("createWindow returned");
     brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
     log_stage("Borealis dark theme applied");
-    brls::Application::setGlobalQuit(true);
-
     log_stage("before pushActivity");
     brls::Application::pushActivity(new HomeActivity(), brls::TransitionAnimation::NONE);
     log_stage("pushActivity returned");
+    brls::Application::setGlobalQuit(true);
+    log_stage("Borealis built-in + exit action enabled");
     if (g_homeView)
     {
         const auto stack = brls::Application::getActivitiesStack();
