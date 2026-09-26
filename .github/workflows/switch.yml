@@ -23,6 +23,15 @@ jobs:
           git fetch --depth 1 origin 5f08b286f3df737f3321d2247a6fe633fcead03c
           git checkout 5f08b286f3df737f3321d2247a6fe633fcead03c
 
+      - name: Apply Switch font defaults
+        working-directory: switch/borealis
+        run: |
+          set -eux
+          app_source=library/lib/core/application.cpp
+          grep -q 'static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
+          sed -i 's/static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);/static int regular = Application::getFont(FONT_REGULAR);/' "$app_source"
+          grep -q 'static int regular = Application::getFont(FONT_REGULAR);' "$app_source"
+
       - name: Verify Borealis compatibility
         working-directory: switch/borealis
         run: |
