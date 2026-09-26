@@ -44,6 +44,7 @@ struct SaikouAnime
 
 static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true };
 static int g_selectedApiSource = 0;
+static bool g_restoreGlobalQuitAfterKeyboard = false;
 static std::atomic<unsigned int> g_anilistAccountRevision{ 0 };
 static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini";
 static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
@@ -1104,17 +1105,6 @@ public:
 
     void tick()
     {
-        if (m_restoreGlobalQuitWhenReleased)
-        {
-            const brls::ControllerState& state = brls::Application::getControllerState();
-            if (!state.buttons[brls::BUTTON_START])
-            {
-                brls::Application::setGlobalQuit(true);
-                m_restoreGlobalQuitWhenReleased = false;
-                log_stage("SEARCH KEYBOARD GLOBAL QUIT RESTORED");
-            }
-        }
-
         if (!m_resultReady.load(std::memory_order_acquire))
             return;
         if (m_worker.joinable())
@@ -1137,7 +1127,6 @@ private:
     std::thread m_worker;
     std::atomic<bool> m_resultReady{ false };
     bool m_searching = false;
-    bool m_restoreGlobalQuitWhenReleased = false;
 
     void run_search()
     {
@@ -1167,7 +1156,7 @@ private:
         // The system keyboard owns input while it is open. Keep Borealis from
         // treating the same + press as the app-wide quit shortcut on return.
         brls::Application::setGlobalQuit(false);
-        m_restoreGlobalQuitWhenReleased = true;
+        g_restoreGlobalQuitAfterKeyboard = true;
         log_stage("SEARCH KEYBOARD GLOBAL QUIT DISABLED");
         char query[256] = {};
         rc = swkbdShow(&keyboard, query, sizeof(query));
@@ -2015,6 +2004,14 @@ private:
 
 static void tick_live_ui_activities()
 {
+    if (g_restoreGlobalQuitAfterKeyboard &&
+        !brls::Application::getControllerState().buttons[brls::BUTTON_START])
+    {
+        brls::Application::setGlobalQuit(true);
+        g_restoreGlobalQuitAfterKeyboard = false;
+        log_stage("SEARCH KEYBOARD GLOBAL QUIT RESTORED");
+    }
+
     if (g_pairingActivity)
         g_pairingActivity->tick();
     if (g_libraryActivity)
