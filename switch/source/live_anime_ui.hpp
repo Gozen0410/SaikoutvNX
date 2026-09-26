@@ -44,6 +44,7 @@ struct SaikouAnime
 
 static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true };
 static int g_selectedApiSource = 0;
+static std::atomic<unsigned int> g_anilistAccountRevision{ 0 };
 static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini";
 static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
@@ -1283,6 +1284,7 @@ private:
                 continue;
             }
 
+            g_anilistAccountRevision.fetch_add(1, std::memory_order_acq_rel);
             log_stage("ANILIST PHONE PAIRING SUCCEEDED");
             set_status("Linked to @" + username + ". Return to Settings or open Library.");
             break;
@@ -1656,6 +1658,35 @@ private:
     }
 };
 
+static void fetch_continue_watching(const std::string& token, SaikouAnime& anime,
+    int& progress, bool& hasEntry, std::string& message)
+{
+    hasEntry = false;
+    progress = 0;
+    if (token.empty())
+    {
+        message = "Link an AniList account in Settings to sync your list.";
+        return;
+    }
+
+    std::string username;
+    std::string libraryStatus;
+    const std::vector<AniListEntry> library = fetch_anilist_library(token, username, libraryStatus);
+    for (const AniListEntry& entry : library)
+    {
+        if (entry.listStatus == "CURRENT")
+        {
+            anime = entry.anime;
+            progress = entry.progress;
+            hasEntry = true;
+            break;
+        }
+    }
+    message = hasEntry
+        ? ("Episode " + std::to_string(progress) + " in progress  |  @" + username)
+        : ("@" + username + " is linked. No Watching entries yet.");
+}
+
 class HomeActivity : public brls::Activity
 {
 public:
@@ -1663,6 +1694,8 @@ public:
     {
         if (m_loader.joinable())
             m_loader.join();
+        if (m_accountLoader.joinable())
+            m_accountLoader.join();
     }
 
     brls::View* createContentView() override
@@ -1686,6 +1719,7 @@ public:
         m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
         m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
         m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
+        m_accountRevision = g_anilistAccountRevision.load(std::memory_order_acquire);
 
         if (m_continueBox)
             m_continueBox->registerAction("Resume watching", brls::BUTTON_A, [this](brls::View*) {
@@ -1717,29 +1751,8 @@ public:
                     if (!download_image(anime.coverUrl, anime.posterPath))
                         anime.posterPath.clear();
                 }
-
-                const std::string token = load_anilist_token();
-                if (token.empty())
-                    m_continueMessage = "Link an AniList account in Settings to sync your list.";
-                else
-                {
-                    std::string username;
-                    std::string libraryStatus;
-                    const std::vector<AniListEntry> library = fetch_anilist_library(token, username, libraryStatus);
-                    for (const AniListEntry& entry : library)
-                    {
-                        if (entry.listStatus == "CURRENT")
-                        {
-                            m_continueAnime = entry.anime;
-                            m_continueProgress = entry.progress;
-                            m_hasContinue = true;
-                            break;
-                        }
-                    }
-                    m_continueMessage = m_hasContinue
-                        ? ("Episode " + std::to_string(m_continueProgress) + " in progress  |  @" + username)
-                        : ("@" + username + " is linked. No Watching entries yet.");
-                }
+                fetch_continue_watching(load_anilist_token(), m_continueAnime,
+                    m_continueProgress, m_hasContinue, m_continueMessage);
                 m_ready.store(true, std::memory_order_release);
             });
         }
@@ -1747,28 +1760,51 @@ public:
 
     void tick()
     {
-        if (m_attached || !m_ready.load(std::memory_order_acquire))
-            return;
-        if (m_loader.joinable())
-            m_loader.join();
+        if (!m_attached && m_ready.load(std::memory_order_acquire))
+        {
+            if (m_loader.joinable())
+                m_loader.join();
+            render_anime_cards(m_cards, m_items);
+            if (m_status)
+                m_status->setText(m_loadStatus + " — select a poster for details.");
+            update_continue_card();
+            m_attached = true;
+            log_stage("ANILIST HOME CARDS ATTACHED");
+        }
 
-        render_anime_cards(m_cards, m_items);
-        if (m_status)
-            m_status->setText(m_loadStatus + " — select a poster for details.");
-        if (m_continueTitle)
-            m_continueTitle->setText(m_hasContinue ? m_continueAnime.title : "Nothing to resume yet");
-        if (m_continueSubtitle)
-            m_continueSubtitle->setText(m_continueMessage);
-        m_attached = true;
-        log_stage("ANILIST HOME CARDS ATTACHED");
+        if (m_attached && m_accountReady.load(std::memory_order_acquire))
+        {
+            if (m_accountLoader.joinable())
+                m_accountLoader.join();
+            m_accountLoading = false;
+            m_accountReady.store(false, std::memory_order_release);
+            update_continue_card();
+        }
+
+        const unsigned int revision = g_anilistAccountRevision.load(std::memory_order_acquire);
+        if (m_attached && revision != m_accountRevision && !m_accountLoading)
+        {
+            m_accountRevision = revision;
+            m_accountLoading = true;
+            m_accountReady.store(false, std::memory_order_release);
+            m_accountLoader = std::thread([this] {
+                fetch_continue_watching(load_anilist_token(), m_continueAnime,
+                    m_continueProgress, m_hasContinue, m_continueMessage);
+                m_accountReady.store(true, std::memory_order_release);
+            });
+        }
     }
 
 private:
     std::thread m_loader;
+    std::thread m_accountLoader;
     std::atomic<bool> m_ready{ false };
+    std::atomic<bool> m_accountReady{ false };
     bool m_attached = false;
+    bool m_accountLoading = false;
     bool m_hasContinue = false;
     int m_continueProgress = 0;
+    unsigned int m_accountRevision = 0;
     std::vector<SaikouAnime> m_items;
     SaikouAnime m_continueAnime;
     std::string m_loadStatus;
@@ -1778,6 +1814,14 @@ private:
     brls::Box* m_continueBox = nullptr;
     brls::Label* m_continueTitle = nullptr;
     brls::Label* m_continueSubtitle = nullptr;
+
+    void update_continue_card()
+    {
+        if (m_continueTitle)
+            m_continueTitle->setText(m_hasContinue ? m_continueAnime.title : "Nothing to resume yet");
+        if (m_continueSubtitle)
+            m_continueSubtitle->setText(m_continueMessage);
+    }
 
     void connect_navigation(const char* id, const char* name, std::function<void()> callback)
     {
