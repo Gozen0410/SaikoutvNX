@@ -10,11 +10,13 @@
 #include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -51,18 +53,6 @@ static bool ensure_network_ready()
     });
     return R_SUCCEEDED(socketResult) ||
         socketResult == MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized);
-}
-
-static bool saikou_owns_socket()
-{
-    static std::once_flag once;
-    static Result socketResult = MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized);
-    static bool socketOwned = false;
-    std::call_once(once, [] {
-        socketResult = socketInitializeDefault();
-        socketOwned = R_SUCCEEDED(socketResult);
-    });
-    return socketOwned;
 }
 
 static bool ensure_curl_ready()
@@ -518,16 +508,13 @@ public:
         heading->setTextColor(nvgRGB(244, 246, 250));
         root->addView(heading);
 
-        char metaText[160];
-        std::snprintf(metaText, sizeof(metaText), "%s%s%s%s%d",
-            anime.score > 0 ? "AniList score " : "",
-            anime.score > 0 ? std::to_string(anime.score).c_str() : "",
-            anime.score > 0 ? " / 100    " : "",
-            anime.format.empty() ? "" : anime.format.c_str(),
-            anime.episodes > 0 ? anime.episodes : 0);
-        std::string meta(metaText);
-        if (anime.episodes > 0) meta += " episodes";
-        if (!anime.status.empty()) meta += "    " + anime.status;
+        std::string meta;
+        if (anime.score > 0)
+            meta = "AniList score " + std::to_string(anime.score) + "/100";
+        if (!anime.format.empty())
+            meta += (meta.empty() ? "" : "    ") + anime.format;
+        if (anime.episodes > 0)
+            meta += (meta.empty() ? "" : "    ") + std::to_string(anime.episodes) + " episodes";
 
         brls::Label* metaLabel = new brls::Label();
         metaLabel->setText(meta);
@@ -962,6 +949,7 @@ public:
 
         view->setDimensions(brls::Application::contentWidth, brls::Application::contentHeight);
         view->setBackgroundColor(nvgRGB(16, 20, 29));
+        g_homeView = view;
         return view;
     }
 
