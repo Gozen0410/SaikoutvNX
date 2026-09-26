@@ -17,8 +17,8 @@
 
     <brls:Label width="auto" height="auto" text="CONTINUE WATCHING" fontSize="19" marginTop="18" textColor="#DCE4F0" />
     <brls:Box id="home/card/continue" width="auto" height="70" axis="column" justifyContent="center" paddingLeft="18" paddingRight="18" paddingTop="8" paddingBottom="8" marginTop="7" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-        <brls:Label width="auto" height="auto" text="Nothing to resume yet" fontSize="18" textColor="#F4F6FA" />
-        <brls:Label width="auto" height="auto" text="Link an AniList account to show your watch progress here." fontSize="14" marginTop="3" textColor="#AEB8C8" />
+        <brls:Label id="home/continue/title" width="auto" height="auto" text="Nothing to resume yet" fontSize="18" textColor="#F4F6FA" />
+        <brls:Label id="home/continue/subtitle" width="auto" height="auto" text="Link an AniList account in Settings to sync your list." fontSize="14" marginTop="3" textColor="#AEB8C8" />
     </brls:Box>
 
     <brls:Box width="auto" height="28" axis="row" alignItems="center" justifyContent="spaceBetween" marginTop="14">
