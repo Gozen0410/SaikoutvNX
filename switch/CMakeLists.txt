@@ -58,10 +58,12 @@ if (PLATFORM_SWITCH)
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SAIKOU_RESOURCES}
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_RESOURCES} ${SAIKOU_RESOURCES}
-        # Match the useful part of NX-torrent-player's Borealis packaging:
-        # keep system images/material/i18n, but drop demo/sample resources that
-        # only inflate the NRO and are unrelated to Saikou.
-        COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/font
+        # Keep Borealis's Switch font. SwitchFontLoader expects the app's default
+        # font at romfs:/font/font.ttf; upstream stores the bundled font as
+        # switch_font.ttf, so copy it to the runtime filename in packaged ROMFS.
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SAIKOU_RESOURCES}/font/switch_font.ttf
+            ${SAIKOU_RESOURCES}/font/font.ttf
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/img/pokemon
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/xml
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SAIKOU_RESOURCES}/icon
