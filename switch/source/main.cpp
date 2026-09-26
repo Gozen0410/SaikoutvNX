@@ -175,9 +175,11 @@ int main(int argc, char* argv[])
     brls::Application::createWindow("SaikouTV NX");
     log_stage("createWindow returned");
 
+    const int regularFont = brls::Application::getFont(brls::FONT_REGULAR);
+    const int defaultFont = brls::Application::getDefaultFont();
+    const int fallbackBaseFont = regularFont >= 0 ? regularFont : defaultFont;
 #ifdef __SWITCH__
     NVGcontext* vg = brls::Application::getNVGContext();
-    const int regularFont = brls::Application::getFont(brls::FONT_REGULAR);
     int fallbackCount = 0;
     const std::string fallbackFonts[] = {
         brls::FONT_CHINESE_SIMPLIFIED,
@@ -190,9 +192,9 @@ int main(int argc, char* argv[])
     for (const std::string& name : fallbackFonts)
     {
         const int fallbackFont = brls::Application::getFont(name);
-        if (vg && regularFont >= 0 && fallbackFont >= 0)
+        if (vg && fallbackBaseFont >= 0 && fallbackFont >= 0 && fallbackFont != fallbackBaseFont)
         {
-            nvgAddFallbackFontId(vg, regularFont, fallbackFont);
+            nvgAddFallbackFontId(vg, fallbackBaseFont, fallbackFont);
             ++fallbackCount;
         }
     }
@@ -200,11 +202,12 @@ int main(int argc, char* argv[])
 
     char fontMarker[192];
     std::snprintf(fontMarker, sizeof(fontMarker),
-        "After createWindow: bundled font file=%d; regular=%d zh-Hans=%d default=%d fallbacks=%d",
+        "After createWindow: bundled font file=%d; regular=%d zh-Hans=%d default=%d fallback-base=%d fallbacks=%d",
         access("romfs:/font/switch_font.ttf", F_OK) == 0 ? 1 : 0,
-        brls::Application::getFont(brls::FONT_REGULAR),
+        regularFont,
         brls::Application::getFont(brls::FONT_CHINESE_SIMPLIFIED),
-        brls::Application::getDefaultFont(),
+        defaultFont,
+        fallbackBaseFont,
 #ifdef __SWITCH__
         fallbackCount
 #else
