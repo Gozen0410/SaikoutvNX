@@ -11,55 +11,19 @@
 
     <brls:Box width="auto" height="2" marginTop="9" marginBottom="12" backgroundColor="#2A3240" />
 
-    <brls:Label id="home/status" width="auto" height="auto" text="Use the D-pad to move, A to select, and + to exit." fontSize="14" textColor="#AEB8C8" />
+    <brls:Label id="home/status" width="auto" height="auto" text="Connecting to AniList..." fontSize="14" textColor="#AEB8C8" />
     <brls:Label width="auto" height="auto" text="Welcome back" fontSize="34" marginTop="7" textColor="#F4F6FA" />
-    <brls:Label width="auto" height="auto" text="Your anime, ready for the big screen." fontSize="17" marginTop="2" textColor="#AEB8C8" />
+    <brls:Label width="auto" height="auto" text="Anime discovery, powered by AniList." fontSize="17" marginTop="2" textColor="#AEB8C8" />
 
-    <brls:Label width="auto" height="auto" text="CONTINUE WATCHING" fontSize="19" marginTop="20" textColor="#DCE4F0" />
-    <brls:Box id="home/card/continue" width="auto" height="78" axis="column" justifyContent="center" paddingLeft="18" paddingRight="18" paddingTop="10" paddingBottom="10" marginTop="8" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
+    <brls:Label width="auto" height="auto" text="CONTINUE WATCHING" fontSize="19" marginTop="18" textColor="#DCE4F0" />
+    <brls:Box id="home/card/continue" width="auto" height="70" axis="column" justifyContent="center" paddingLeft="18" paddingRight="18" paddingTop="8" paddingBottom="8" marginTop="7" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
         <brls:Label width="auto" height="auto" text="Nothing to resume yet" fontSize="18" textColor="#F4F6FA" />
-        <brls:Label width="auto" height="auto" text="Your watch progress will appear here." fontSize="14" marginTop="3" textColor="#AEB8C8" />
+        <brls:Label width="auto" height="auto" text="Link an AniList account to show your watch progress here." fontSize="14" marginTop="3" textColor="#AEB8C8" />
     </brls:Box>
 
-    <brls:Box width="auto" height="28" axis="row" alignItems="center" justifyContent="spaceBetween" marginTop="16">
+    <brls:Box width="auto" height="28" axis="row" alignItems="center" justifyContent="spaceBetween" marginTop="14">
         <brls:Label width="auto" height="auto" text="TRENDING" fontSize="19" textColor="#DCE4F0" />
-        <brls:Label width="auto" height="auto" text="Static preview cards" fontSize="13" textColor="#8793A6" />
+        <brls:Label width="auto" height="auto" text="Live AniList titles, posters, and scores" fontSize="13" textColor="#8793A6" />
     </brls:Box>
-    <brls:Box width="auto" height="96" axis="row" marginTop="7">
-        <brls:Box id="home/card/frieren" width="270" height="96" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="Frieren: Beyond Journey's End" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Adventure - Preview" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-        <brls:Box id="home/card/apothecary" width="270" height="96" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" marginLeft="14" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="The Apothecary Diaries" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Drama - Preview" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-        <brls:Box id="home/card/solo" width="270" height="96" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" marginLeft="14" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="Solo Leveling" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Action - Preview" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-        <brls:Box id="home/card/one-piece" width="270" height="96" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" marginLeft="14" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="One Piece" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Adventure - Preview" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-    </brls:Box>
-
-    <brls:Box width="auto" height="28" axis="row" alignItems="center" justifyContent="spaceBetween" marginTop="15">
-        <brls:Label width="auto" height="auto" text="LATEST EPISODES" fontSize="19" textColor="#DCE4F0" />
-        <brls:Label width="auto" height="auto" text="Preview content" fontSize="13" textColor="#8793A6" />
-    </brls:Box>
-    <brls:Box width="auto" height="84" axis="row" marginTop="7">
-        <brls:Box id="home/episode/frieren" width="360" height="84" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="Frieren - Episode 28" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Preview episode card" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-        <brls:Box id="home/episode/one-piece" width="360" height="84" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" marginLeft="14" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="One Piece - Episode 1106" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Preview episode card" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-        <brls:Box id="home/episode/solo" width="360" height="84" axis="column" justifyContent="center" paddingLeft="15" paddingRight="12" paddingTop="8" paddingBottom="8" marginLeft="14" backgroundColor="#1B2230" borderColor="#30394A" borderThickness="1" cornerRadius="10" focusable="true">
-            <brls:Label width="auto" height="auto" text="Solo Leveling - Episode 12" fontSize="16" textColor="#F4F6FA" />
-            <brls:Label width="auto" height="auto" text="Preview episode card" fontSize="13" marginTop="4" textColor="#AEB8C8" />
-        </brls:Box>
-    </brls:Box>
+    <brls:Box id="home/trending/cards" width="auto" height="260" axis="column" marginTop="5" />
 </brls:Box>
