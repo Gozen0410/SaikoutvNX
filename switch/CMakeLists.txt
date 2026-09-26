@@ -44,6 +44,8 @@ target_link_options(${PROJECT_NAME} PRIVATE -Wl,--gc-sections)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     borealis
+    curl
+    z
     ${APP_PLATFORM_LIB})
 
 if (PLATFORM_SWITCH)
