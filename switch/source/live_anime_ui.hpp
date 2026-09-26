@@ -908,7 +908,7 @@ static void open_anime_details(const SaikouAnime& anime)
     log_stage(marker);
     brls::Application::pushActivity(
         new AnimeDetailsActivity(anime),
-        brls::TransitionAnimation::SLIDE_LEFT);
+        brls::TransitionAnimation::NONE);
     log_stage("DETAIL ACTIVITY PUSH RETURNED");
 }
 
@@ -1438,7 +1438,7 @@ public:
         m_pairButton->setMargins(0, 8, 0, 0);
         m_pairButton->setFocusable(true);
         m_pairButton->registerAction("Pair AniList account", brls::BUTTON_A, [](brls::View*) {
-            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::NONE);
             return true;
         });
         m_content->addView(m_pairButton);
@@ -1723,7 +1723,7 @@ public:
         pair->setFocusable(true);
         pair->registerAction("Link AniList account", brls::BUTTON_A, [](brls::View*) {
             log_stage("SETTINGS OPEN PAIRING");
-            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::NONE);
             return true;
         });
         root->addView(pair);
@@ -1835,19 +1835,19 @@ public:
                 if (m_hasContinue)
                     open_anime_details(m_continueAnime);
                 else
-                    brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+                    brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::NONE);
                 log_stage("CONTINUE ACTION PUSH RETURNED");
                 return true;
             });
 
         connect_navigation("nav/search", "Open Search", [] {
-            brls::Application::pushActivity(new SearchActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            brls::Application::pushActivity(new SearchActivity(), brls::TransitionAnimation::NONE);
         });
         connect_navigation("nav/library", "Open Library", [] {
-            brls::Application::pushActivity(new LibraryActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            brls::Application::pushActivity(new LibraryActivity(), brls::TransitionAnimation::NONE);
         });
         connect_navigation("nav/settings", "Open Settings", [] {
-            brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::SLIDE_LEFT);
+            brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::NONE);
         });
         connect_navigation("nav/home", "Home", [] {});
         if (m_status) m_status->setText("Loading live AniList trending titles...");
