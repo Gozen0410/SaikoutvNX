@@ -529,7 +529,7 @@ public:
             brls::Image* banner = new brls::Image();
             banner->setDimensions(1160.0f, 150.0f);
             banner->setMargins(0, 12, 0, 0);
-            banner->setScalingType(brls::ImageScalingType::CROP);
+            banner->setScalingType(brls::ImageScalingType::FILL);
             banner->setImageFromFile(bannerPath);
             banner->setFocusable(false);
             root->addView(banner);
@@ -548,7 +548,7 @@ public:
         {
             brls::Image* poster = new brls::Image();
             poster->setDimensions(126.0f, 184.0f);
-            poster->setScalingType(brls::ImageScalingType::CROP);
+            poster->setScalingType(brls::ImageScalingType::FIT);
             poster->setImageFromFile(anime.posterPath);
             poster->setFocusable(false);
             summary->addView(poster);
@@ -679,7 +679,7 @@ static brls::Box* make_anime_card(const SaikouAnime& anime)
     {
         brls::Image* poster = new brls::Image();
         poster->setDimensions(168.0f, 168.0f);
-        poster->setScalingType(brls::ImageScalingType::CROP);
+        poster->setScalingType(brls::ImageScalingType::FIT);
         poster->setImageFromFile(imagePath);
         poster->setFocusable(false);
         card->addView(poster);
@@ -911,10 +911,9 @@ private:
         toggle->setText(toggle_text(index));
         toggle->setFontSize(17.0f);
         toggle->setMargins(0, 7, 0, 0);
-        toggle->setPadding(8.0f);
         toggle->setBackgroundColor(nvgRGB(27, 34, 48));
         toggle->setFocusable(true);
-        toggle->registerAction("Toggle source API", brls::BUTTON_A, [toggle, index](brls::View*) {
+        toggle->registerAction("Toggle source API", brls::BUTTON_A, [this, toggle, index](brls::View*) {
             g_providerEnabled[index] = !g_providerEnabled[index];
             save_source_settings();
             toggle->setText(toggle_text(index));
