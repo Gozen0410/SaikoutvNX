@@ -693,25 +693,45 @@ static void clear_box(brls::Box* box)
         box->removeView(child);
 }
 
+class AnimeDetailsActivity;
+static AnimeDetailsActivity* g_animeDetailsActivity = nullptr;
+
 class AnimeDetailsActivity : public brls::Activity
 {
 public:
-    explicit AnimeDetailsActivity(SaikouAnime anime) : anime(std::move(anime)) {}
+    explicit AnimeDetailsActivity(SaikouAnime anime) : anime(std::move(anime))
+    {
+        g_animeDetailsActivity = this;
+    }
+
+    ~AnimeDetailsActivity() override
+    {
+        if (m_bannerWorker.joinable())
+            m_bannerWorker.join();
+        if (g_animeDetailsActivity == this)
+            g_animeDetailsActivity = nullptr;
+    }
 
     brls::View* createContentView() override
     {
-        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
-        root->setWidthPercentage(100.0f);
-        root->setHeightPercentage(100.0f);
-        root->setPadding(30.0f);
-        root->setBackgroundColor(nvgRGB(16, 20, 29));
-        return root;
+        log_stage("ACTIVITY OPEN: anime details");
+        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
+        frame->setWidthPercentage(100.0f);
+        frame->setHeightPercentage(100.0f);
+        frame->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        m_content = new brls::Box(brls::Axis::COLUMN);
+        m_content->setWidthPercentage(100.0f);
+        m_content->setPadding(30.0f);
+        frame->setContentView(m_content);
+        return frame;
     }
 
     void onContentAvailable() override
     {
-        brls::Box* root = dynamic_cast<brls::Box*>(getContentView());
+        brls::Box* root = m_content;
         if (!root) return;
+        log_stage("DETAIL CONTENT BUILT");
 
         brls::Label* heading = new brls::Label();
         heading->setText(anime.title);
@@ -734,28 +754,28 @@ public:
         metaLabel->setMargins(0, 6, 0, 0);
         root->addView(metaLabel);
 
-        const std::string bannerPath = cached_banner_path(anime.id);
-        if (!anime.bannerUrl.empty() && download_image(anime.bannerUrl, bannerPath))
+        if (!anime.bannerUrl.empty())
         {
-            brls::Image* banner = new brls::Image();
-            banner->setDimensions(1160.0f, 150.0f);
-            banner->setMargins(0, 12, 0, 0);
-            banner->setScalingType(brls::ImageScalingType::FILL);
-            banner->setImageFromFile(bannerPath);
-            banner->setFocusable(false);
-            root->addView(banner);
+            m_bannerSlot = new brls::Box();
+            m_bannerSlot->setDimensions(1160.0f, 150.0f);
+            m_bannerSlot->setMargins(0, 12, 0, 0);
+            m_bannerSlot->setBackgroundColor(nvgRGB(27, 34, 48));
+            m_bannerSlot->setFocusable(false);
+            root->addView(m_bannerSlot);
+            m_bannerPath = cached_banner_path(anime.id);
+            m_bannerWorker = std::thread([this] {
+                m_bannerDownloaded = download_image(anime.bannerUrl, m_bannerPath);
+                m_bannerReady.store(true, std::memory_order_release);
+            });
         }
 
         brls::Box* summary = new brls::Box(brls::Axis::ROW);
         summary->setHeight(190.0f);
         summary->setMargins(0, 12, 0, 0);
         if (anime.posterPath.empty())
-        {
             anime.posterPath = cached_cover_path(anime.id);
-            download_image(anime.coverUrl, anime.posterPath);
-        }
         struct stat posterStat;
-        if (stat(anime.posterPath.c_str(), &posterStat) == 0)
+        if (stat(anime.posterPath.c_str(), &posterStat) == 0 && posterStat.st_size > 256)
         {
             brls::Image* poster = new brls::Image();
             poster->setDimensions(126.0f, 184.0f);
@@ -821,9 +841,38 @@ public:
         root->addView(m_sourceStatus);
     }
 
+    void tick()
+    {
+        if (!m_bannerReady.load(std::memory_order_acquire))
+            return;
+        if (m_bannerWorker.joinable())
+            m_bannerWorker.join();
+        m_bannerReady.store(false, std::memory_order_release);
+        if (m_bannerDownloaded && m_bannerSlot)
+        {
+            brls::Image* banner = new brls::Image();
+            banner->setDimensions(1160.0f, 150.0f);
+            banner->setScalingType(brls::ImageScalingType::FILL);
+            banner->setImageFromFile(m_bannerPath);
+            banner->setFocusable(false);
+            m_bannerSlot->addView(banner);
+            log_stage("DETAIL BANNER READY");
+        }
+        else
+        {
+            log_stage("DETAIL BANNER UNAVAILABLE");
+        }
+    }
+
 private:
     SaikouAnime anime;
+    brls::Box* m_content = nullptr;
+    brls::Box* m_bannerSlot = nullptr;
     brls::Label* m_sourceStatus = nullptr;
+    std::string m_bannerPath;
+    std::thread m_bannerWorker;
+    std::atomic<bool> m_bannerReady{ false };
+    bool m_bannerDownloaded = false;
 
     brls::Box* make_source_choice(const ApiSourceInfo& source)
     {
@@ -857,6 +906,9 @@ private:
 
 static void open_anime_details(const SaikouAnime& anime)
 {
+    char marker[96];
+    std::snprintf(marker, sizeof(marker), "ANIME CARD OPENED: id=%d", anime.id);
+    log_stage(marker);
     brls::Application::pushActivity(
         new AnimeDetailsActivity(anime),
         brls::TransitionAnimation::SLIDE_LEFT);
@@ -968,16 +1020,34 @@ static void render_anime_cards(brls::Box* container, const std::vector<SaikouAni
     }
 }
 
+class SearchActivity;
+static SearchActivity* g_searchActivity = nullptr;
+
 class SearchActivity : public brls::Activity
 {
 public:
+    SearchActivity() { g_searchActivity = this; }
+
+    ~SearchActivity() override
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+        if (g_searchActivity == this)
+            g_searchActivity = nullptr;
+    }
+
     brls::View* createContentView() override
     {
+        log_stage("ACTIVITY OPEN: Search");
+        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
+        frame->setWidthPercentage(100.0f);
+        frame->setHeightPercentage(100.0f);
+        frame->setBackgroundColor(nvgRGB(16, 20, 29));
+
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         root->setWidthPercentage(100.0f);
-        root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
-        root->setBackgroundColor(nvgRGB(16, 20, 29));
+        frame->setContentView(root);
 
         brls::Label* heading = new brls::Label();
         heading->setText("SEARCH ANIME");
@@ -1016,21 +1086,49 @@ public:
         m_results->setWidthPercentage(100.0f);
         m_results->setMargins(0, 12, 0, 0);
         root->addView(m_results);
-        return root;
+        return frame;
+    }
+
+    void tick()
+    {
+        if (!m_resultReady.load(std::memory_order_acquire))
+            return;
+        if (m_worker.joinable())
+            m_worker.join();
+        render_anime_cards(m_results, m_resultItems);
+        if (m_status)
+            m_status->setText(m_resultStatus + " — press A on a title for details.");
+        m_searching = false;
+        m_resultReady.store(false, std::memory_order_release);
+        log_stage("SEARCH RESULTS ATTACHED");
     }
 
 private:
     brls::Label* m_queryLabel = nullptr;
     brls::Label* m_status = nullptr;
     brls::Box* m_results = nullptr;
+    std::string m_pendingQuery;
+    std::string m_resultStatus;
+    std::vector<SaikouAnime> m_resultItems;
+    std::thread m_worker;
+    std::atomic<bool> m_resultReady{ false };
+    bool m_searching = false;
 
     void run_search()
     {
+        if (m_searching)
+        {
+            if (m_status) m_status->setText("Search is still loading. Please wait.");
+            return;
+        }
+
+        log_stage("SEARCH SWITCH KEYBOARD OPEN");
         SwkbdConfig keyboard{};
         Result rc = swkbdCreate(&keyboard, 0);
         if (R_FAILED(rc))
         {
             if (m_status) m_status->setText("Could not open the Switch keyboard.");
+            log_stage("SEARCH SWITCH KEYBOARD CREATE FAILED");
             return;
         }
         swkbdConfigMakePresetDefault(&keyboard);
@@ -1040,23 +1138,30 @@ private:
         rc = swkbdShow(&keyboard, query, sizeof(query));
         swkbdClose(&keyboard);
         if (R_FAILED(rc) || query[0] == '\0')
+        {
+            log_stage("SEARCH KEYBOARD CANCELED");
             return;
+        }
 
-        if (m_queryLabel) m_queryLabel->setText(query);
+        if (m_worker.joinable())
+            m_worker.join();
+        m_pendingQuery = query;
+        if (m_queryLabel) m_queryLabel->setText(m_pendingQuery);
         if (m_status) m_status->setText("Searching AniList...");
         clear_box(m_results);
-
-        std::string status;
-        std::vector<SaikouAnime> results = fetch_anilist_media(query, 12, status);
-        for (SaikouAnime& anime : results)
-        {
-            anime.posterPath = cached_cover_path(anime.id);
-            if (!download_image(anime.coverUrl, anime.posterPath))
-                anime.posterPath.clear();
-        }
-        render_anime_cards(m_results, results);
-        if (m_status)
-            m_status->setText(status + " — press A on a title for details.");
+        m_searching = true;
+        m_resultReady.store(false, std::memory_order_release);
+        log_stage("SEARCH REQUEST STARTED");
+        m_worker = std::thread([this] {
+            m_resultItems = fetch_anilist_media(m_pendingQuery, 12, m_resultStatus);
+            for (SaikouAnime& anime : m_resultItems)
+            {
+                anime.posterPath = cached_cover_path(anime.id);
+                if (!download_image(anime.coverUrl, anime.posterPath))
+                    anime.posterPath.clear();
+            }
+            m_resultReady.store(true, std::memory_order_release);
+        });
     }
 };
 
@@ -1359,6 +1464,7 @@ public:
             tab->setBackgroundColor(i == m_category ? nvgRGB(36, 70, 86) : nvgRGB(27, 34, 48));
             tab->setFocusable(true);
             tab->registerAction("Show AniList category", brls::BUTTON_A, [this, i](brls::View*) {
+                log_stage("LIBRARY CATEGORY SELECTED");
                 if (!m_loading && m_loaded && m_category != i)
                 {
                     m_category = i;
@@ -1422,9 +1528,11 @@ public:
 
     void onContentAvailable() override
     {
+        log_stage("ACTIVITY OPEN: Library");
         m_token = load_anilist_token();
         if (m_token.empty())
         {
+            log_stage("LIBRARY HAS NO SAVED ANILIST TOKEN");
             m_loading = false;
             m_loaded = true;
             m_loadStatus = "No AniList account is linked. Pair with the Saikou phone app above.";
@@ -1433,6 +1541,7 @@ public:
         }
 
         m_loading = true;
+        log_stage("LIBRARY REQUEST STARTED");
         m_worker = std::thread([this] {
             m_entries = fetch_anilist_library(m_token, m_username, m_loadStatus);
             m_pageItems = collect_page_items();
@@ -1451,6 +1560,7 @@ public:
         m_loaded = true;
         update_category_styles();
         render_page();
+        log_stage("LIBRARY PAGE ATTACHED");
         m_ready.store(false, std::memory_order_release);
     }
 
@@ -1547,8 +1657,9 @@ private:
                 progress = entry.listName.empty() ? entry.listStatus : entry.listName;
             }
 
-            brls::Box* row = nullptr;
-            if (m_cards->getChildren().empty() || dynamic_cast<brls::Box*>(m_cards->getChildren().back())->getChildren().size() >= 6)
+            brls::Box* row = m_cards->getChildren().empty()
+                ? nullptr : dynamic_cast<brls::Box*>(m_cards->getChildren().back());
+            if (!row || row->getChildren().size() >= 6)
             {
                 row = new brls::Box(brls::Axis::ROW);
                 row->setWidth(1160.0f);
@@ -1556,8 +1667,6 @@ private:
                 row->setAlignItems(brls::AlignItems::FLEX_START);
                 m_cards->addView(row);
             }
-            else
-                row = dynamic_cast<brls::Box*>(m_cards->getChildren().back());
             row->addView(make_anime_card(entry.anime, progress));
         }
         if (m_pageItems.empty())
@@ -1588,11 +1697,16 @@ class SettingsActivity : public brls::Activity
 public:
     brls::View* createContentView() override
     {
+        log_stage("ACTIVITY OPEN: Settings");
+        brls::ScrollingFrame* frame = new brls::ScrollingFrame();
+        frame->setWidthPercentage(100.0f);
+        frame->setHeightPercentage(100.0f);
+        frame->setBackgroundColor(nvgRGB(16, 20, 29));
+
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         root->setWidthPercentage(100.0f);
-        root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
-        root->setBackgroundColor(nvgRGB(16, 20, 29));
+        frame->setContentView(root);
 
         brls::Label* heading = new brls::Label();
         heading->setText("SETTINGS");
@@ -1617,6 +1731,7 @@ public:
         pair->setMargins(0, 12, 0, 0);
         pair->setFocusable(true);
         pair->registerAction("Link AniList account", brls::BUTTON_A, [](brls::View*) {
+            log_stage("SETTINGS OPEN PAIRING");
             brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::SLIDE_LEFT);
             return true;
         });
@@ -1630,7 +1745,7 @@ public:
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
             root->addView(make_toggle(i));
-        return root;
+        return frame;
     }
 
 private:
@@ -1643,6 +1758,7 @@ private:
         toggle->setBackgroundColor(nvgRGB(27, 34, 48));
         toggle->setFocusable(true);
         toggle->registerAction("Toggle source API", brls::BUTTON_A, [this, toggle, index](brls::View*) {
+            log_stage("SETTINGS SOURCE TOGGLE");
             g_providerEnabled[index] = !g_providerEnabled[index];
             save_source_settings();
             toggle->setText(toggle_text(index));
@@ -1723,6 +1839,7 @@ public:
 
         if (m_continueBox)
             m_continueBox->registerAction("Resume watching", brls::BUTTON_A, [this](brls::View*) {
+                log_stage("CONTINUE WATCHING ACTION");
                 if (m_hasContinue)
                     open_anime_details(m_continueAnime);
                 else
@@ -1827,7 +1944,10 @@ private:
     {
         brls::View* view = getView(id);
         if (!view) return;
-        view->registerAction(name, brls::BUTTON_A, [callback](brls::View*) {
+        view->registerAction(name, brls::BUTTON_A, [callback, name](brls::View*) {
+            char marker[128];
+            std::snprintf(marker, sizeof(marker), "NAV ACTION: %s", name);
+            log_stage(marker);
             callback();
             return true;
         });
@@ -1840,4 +1960,8 @@ static void tick_live_ui_activities()
         g_pairingActivity->tick();
     if (g_libraryActivity)
         g_libraryActivity->tick();
+    if (g_searchActivity)
+        g_searchActivity->tick();
+    if (g_animeDetailsActivity)
+        g_animeDetailsActivity->tick();
 }
