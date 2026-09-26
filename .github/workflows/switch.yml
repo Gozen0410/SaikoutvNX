@@ -30,8 +30,8 @@ jobs:
           app_source=library/lib/core/application.cpp
           grep -q 'static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
           sed -i 's/static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);/static int regular = Application::getFont(FONT_REGULAR);/' "$app_source"
-          sed -i '/static int regular = Application::getFont(FONT_REGULAR);/a\\
-              if (regular == FONT_INVALID)\\
+          sed -i '/static int regular = Application::getFont(FONT_REGULAR);/a\
+              if (regular == FONT_INVALID)\
                   regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);' "$app_source"
           grep -q 'static int regular = Application::getFont(FONT_REGULAR);' "$app_source"
           grep -q 'if (regular == FONT_INVALID)' "$app_source"
