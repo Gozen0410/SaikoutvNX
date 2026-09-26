@@ -49,6 +49,22 @@ static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini
 static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
 
+static void register_page_back_action(brls::View* root)
+{
+    if (!root)
+        return;
+
+    root->registerAction("Back", brls::BUTTON_B, [](brls::View*) {
+        log_stage("NAV ACTION: Back");
+        // Pop after the input traversal has released its current View pointers.
+        brls::sync([] {
+            const bool popped = brls::Application::popActivity(brls::TransitionAnimation::NONE, [] {}, true);
+            log_stage(popped ? "NAV BACK: returned to previous screen" : "NAV BACK: no previous screen");
+        });
+        return true;
+    });
+}
+
 static bool ensure_network_ready()
 {
     static std::once_flag once;
@@ -716,6 +732,7 @@ public:
     {
         log_stage("ACTIVITY OPEN: anime details");
         m_content = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(m_content);
         m_content->setWidthPercentage(100.0f);
         m_content->setHeightPercentage(100.0f);
         m_content->setPadding(30.0f);
@@ -1038,6 +1055,7 @@ public:
     {
         log_stage("ACTIVITY OPEN: Search");
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
@@ -1180,6 +1198,7 @@ public:
     brls::View* createContentView() override
     {
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
         root->setPadding(34.0f);
@@ -1413,6 +1432,7 @@ public:
     {
         log_stage("LIBRARY VIEW CREATE START");
         m_content = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(m_content);
         m_content->setWidthPercentage(100.0f);
         m_content->setHeightPercentage(100.0f);
         m_content->setPadding(30.0f);
@@ -1694,6 +1714,7 @@ public:
     {
         log_stage("ACTIVITY OPEN: Settings");
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
@@ -1731,7 +1752,7 @@ public:
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 18, 0, 6);
+        sourceHeading->setMargins(0, 18, 0, 10);
         root->addView(sourceHeading);
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
@@ -1741,19 +1762,30 @@ public:
     }
 
 private:
-    brls::Label* make_toggle(size_t index)
+    brls::Box* make_toggle(size_t index)
     {
-        brls::Label* toggle = new brls::Label();
-        toggle->setText(toggle_text(index));
-        toggle->setFontSize(17.0f);
-        toggle->setMargins(0, 7, 0, 0);
+        brls::Box* toggle = new brls::Box(brls::Axis::ROW);
+        toggle->setWidthPercentage(100.0f);
+        toggle->setHeight(46.0f);
+        toggle->setMargins(0, 9, 0, 0);
+        toggle->setPadding(10.0f);
+        toggle->setAlignItems(brls::AlignItems::CENTER);
         toggle->setBackgroundColor(nvgRGB(27, 34, 48));
+        toggle->setBorderColor(nvgRGB(48, 57, 74));
+        toggle->setBorderThickness(1.0f);
+        toggle->setCornerRadius(6.0f);
         toggle->setFocusable(true);
-        toggle->registerAction("Toggle source API", brls::BUTTON_A, [this, toggle, index](brls::View*) {
+
+        brls::Label* label = new brls::Label();
+        label->setText(toggle_text(index));
+        label->setFontSize(17.0f);
+        label->setTextColor(nvgRGB(214, 222, 235));
+        toggle->addView(label);
+        toggle->registerAction("Toggle source API", brls::BUTTON_A, [this, label, index](brls::View*) {
             log_stage("SETTINGS SOURCE TOGGLE");
             g_providerEnabled[index] = !g_providerEnabled[index];
             save_source_settings();
-            toggle->setText(toggle_text(index));
+            label->setText(toggle_text(index));
             return true;
         });
         return toggle;
