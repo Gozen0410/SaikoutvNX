@@ -219,6 +219,7 @@ int main(int argc, char* argv[])
         const bool running = brls::Application::mainLoop();
         log_controller_edges();
         homeActivity->tick();
+        tick_live_ui_activities();
 
         if (!focusLoggedAfterFirstFrame)
         {
