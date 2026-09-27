@@ -1984,7 +1984,7 @@ public:
 
         m_grid = new brls::Box(brls::Axis::COLUMN);
         m_grid->setWidth(1160.0f);
-        m_grid->setHeight(2200.0f);
+        m_grid->setHeight(600.0f);
         m_scroll->setContentView(m_grid);
         root->addView(m_scroll);
 
@@ -1998,15 +1998,27 @@ public:
 
     void tick()
     {
-        if (!m_ready.load(std::memory_order_acquire))
-            return;
+        if (m_ready.load(std::memory_order_acquire))
+        {
+            if (m_worker.joinable())
+                m_worker.join();
 
-        if (m_worker.joinable())
-            m_worker.join();
+            append_grid_items(m_renderedCount, m_items.size());
+            m_renderedCount = m_items.size();
 
-        render_grid();
-        m_ready.store(false, std::memory_order_release);
-        m_loading = false;
+            m_ready.store(false, std::memory_order_release);
+            m_loading = false;
+
+            if (m_statusLabel)
+            {
+                std::string status = m_loadStatus.empty() ? "AniList" : m_loadStatus;
+                status += " — " + std::to_string(m_items.size()) + " loaded";
+                status += " — scroll down for more";
+                m_statusLabel->setText(status);
+            }
+        }
+
+        maybe_load_more();
     }
 
 private:
@@ -2019,100 +2031,104 @@ private:
     std::thread m_worker;
     std::atomic<bool> m_ready{ false };
     bool m_loading = false;
+    bool m_hasMore = true;
+    size_t m_renderedCount = 0;
     int m_page = 2;
     std::string m_loadStatus;
 
     void start_load(int page)
     {
-        if (m_loading)
+        if (m_loading || !m_hasMore)
             return;
 
         if (m_worker.joinable())
             m_worker.join();
 
-        m_page = page;
+        const int requestedPage = page;
+        m_page = requestedPage;
         m_loading = true;
         m_ready.store(false, std::memory_order_release);
-        if (m_statusLabel)
-            m_statusLabel->setText("Loading AniList titles...");
 
-        m_worker = std::thread([this] {
+        if (m_statusLabel)
+            m_statusLabel->setText("Loading more AniList titles...");
+
+        m_worker = std::thread([this, requestedPage] {
             const bool airing = m_type == HomeCatalogType::AIRING;
-            m_items = fetch_anilist_media(
-                "", 20, m_loadStatus, m_page,
+            std::vector<SaikouAnime> newItems = fetch_anilist_media(
+                "", 20, m_loadStatus, requestedPage,
                 "TRENDING_DESC", airing ? "RELEASING" : nullptr);
 
-            for (SaikouAnime& anime : m_items)
+            for (SaikouAnime& anime : newItems)
             {
                 anime.posterPath = cached_cover_path(anime.id);
                 if (!download_image(anime.coverUrl, anime.posterPath))
                     anime.posterPath.clear();
             }
 
+            if (newItems.size() < 20)
+                m_hasMore = false;
+
+            m_items.insert(m_items.end(), newItems.begin(), newItems.end());
             m_ready.store(true, std::memory_order_release);
         });
     }
 
-    void render_grid()
+    void append_grid_items(size_t startIndex, size_t endIndex)
     {
-        if (!m_grid)
+        if (!m_grid || startIndex >= endIndex)
             return;
-
-        clear_box(m_grid);
 
         constexpr size_t perRow = 6;
         constexpr float rowWidth = 1160.0f;
         constexpr float rowHeight = 252.0f;
 
-        for (size_t start = 0; start < m_items.size(); start += perRow)
+        size_t index = startIndex;
+        while (index < endIndex)
         {
-            brls::Box* row = new brls::Box(brls::Axis::ROW);
-            row->setWidth(rowWidth);
-            row->setHeight(rowHeight);
-            row->setAlignItems(brls::AlignItems::FLEX_START);
+            brls::Box* row = nullptr;
+            if (!m_grid->getChildren().empty())
+            {
+                row = dynamic_cast<brls::Box*>(m_grid->getChildren().back());
+                if (!row || row->getChildren().size() >= perRow)
+                    row = nullptr;
+            }
 
-            const size_t stop = std::min(m_items.size(), start + perRow);
-            for (size_t i = start; i < stop; ++i)
-                row->addView(make_anime_card(m_items[i]));
+            if (!row)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_grid->addView(row);
+            }
 
-            m_grid->addView(row);
+            while (index < endIndex && row->getChildren().size() < perRow)
+            {
+                row->addView(make_anime_card(m_items[index]));
+                ++index;
+            }
         }
 
-        if (m_items.size() >= 20)
-        {
-            brls::Box* more = new brls::Box(brls::Axis::ROW);
-            more->setWidth(rowWidth);
-            more->setHeight(58.0f);
-            more->setMargins(0, 8, 0, 0);
-            more->setPadding(18.0f);
-            more->setBackgroundColor(nvgRGB(27, 34, 48));
-            more->setBorderColor(nvgRGB(48, 57, 74));
-            more->setBorderThickness(1.0f);
-            more->setCornerRadius(9.0f);
-            more->setFocusable(true);
+        const size_t rowCount = (m_items.size() + perRow - 1) / perRow;
+        const float contentHeight = static_cast<float>(std::max<size_t>(1, rowCount)) * rowHeight + 20.0f;
+        m_grid->setHeight(std::max(600.0f, contentHeight));
+    }
 
-            brls::Label* label = new brls::Label();
-            label->setText("LOAD NEXT 20");
-            label->setFontSize(16.0f);
-            label->setTextColor(nvgRGB(244, 246, 250));
-            label->setFocusable(false);
-            more->addView(label);
+    void maybe_load_more()
+    {
+        if (m_loading || !m_hasMore || !m_scroll || !m_grid || m_items.empty())
+            return;
 
-            more->registerAction("Load next page", brls::BUTTON_A, [this](brls::View*) {
-                start_load(m_page + 1);
-                return true;
-            });
-            m_grid->addView(more);
-        }
+        const float viewportHeight = m_scroll->getHeight();
+        const float currentOffset = m_scroll->getContentOffsetY();
+        const float remaining = m_grid->getHeight() - (currentOffset + viewportHeight);
 
-        if (m_statusLabel)
-        {
-            std::string status = m_loadStatus.empty() ? "AniList" : m_loadStatus;
-            status += " — page " + std::to_string(m_page);
-            m_statusLabel->setText(status);
-        }
+        // Begin the next request before the user reaches the absolute bottom.
+        if (remaining <= 250.0f)
+            start_load(m_page + 1);
     }
 };
+
 
 class HomeActivity : public brls::Activity
 {
