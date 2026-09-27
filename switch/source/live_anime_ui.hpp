@@ -1034,6 +1034,31 @@ static brls::Box* make_anime_card(const SaikouAnime& anime, const std::string& s
     return card;
 }
 
+static void render_horizontal_anime_cards(brls::Box* container, const std::vector<SaikouAnime>& items)
+{
+    if (!container) return;
+    clear_box(container);
+
+    brls::Box* row = new brls::Box(brls::Axis::ROW);
+    row->setWidth(std::max(1160.0f, static_cast<float>(items.size()) * 190.0f));
+    row->setHeight(252.0f);
+    row->setAlignItems(brls::AlignItems::FLEX_START);
+
+    for (const SaikouAnime& anime : items)
+        row->addView(make_anime_card(anime));
+
+    container->addView(row);
+
+    if (items.empty())
+    {
+        brls::Label* empty = new brls::Label();
+        empty->setText("No titles to show.");
+        empty->setFontSize(16.0f);
+        empty->setTextColor(nvgRGB(174, 184, 200));
+        row->addView(empty);
+    }
+}
+
 static void render_anime_cards(brls::Box* container, const std::vector<SaikouAnime>& items)
 {
     if (!container) return;
@@ -1931,7 +1956,7 @@ public:
         if (!m_loader.joinable())
         {
             m_loader = std::thread([this] {
-                m_items = fetch_anilist_media("", 6, m_loadStatus);
+                m_items = fetch_anilist_media("", 24, m_loadStatus);
                 for (SaikouAnime& anime : m_items)
                 {
                     anime.posterPath = cached_cover_path(anime.id);
@@ -1951,7 +1976,7 @@ public:
         {
             if (m_loader.joinable())
                 m_loader.join();
-            render_anime_cards(m_cards, m_items);
+            render_horizontal_anime_cards(m_cards, m_items);
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
             update_continue_card();
