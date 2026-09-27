@@ -503,6 +503,36 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
     return result;
 }
 
+static std::vector<SaikouAnime> fetch_currently_airing_media(int pageSize, std::string& status)
+{
+    static const std::string endpoint = "https://graphql.anilist.co";
+    const std::string query =
+        "query ($page: Int, $perPage: Int) { "
+        "Page(page: $page, perPage: $perPage) { "
+        "media(type: ANIME, status: RELEASING, sort: POPULARITY_DESC) { "
+        "id title { english romaji native userPreferred } "
+        "coverImage { large extraLarge } bannerImage averageScore format status episodes "
+        "description(asHtml: false) "
+        "} } }";
+
+    std::string body = "{\"query\":" + json_quote(query) +
+        ",\"variables\":{\"page\":1,\"perPage\":" + std::to_string(pageSize) + "}}";
+    std::string response;
+    if (!http_request(endpoint, &body, response, 12))
+    {
+        status = "AniList could not be reached. Check the Switch internet connection.";
+        log_stage("ANILIST AIRING REQUEST FAILED");
+        return {};
+    }
+
+    std::vector<SaikouAnime> result = parse_anilist_media(response);
+    char marker[128];
+    std::snprintf(marker, sizeof(marker), "ANILIST AIRING FOUND %zu ITEMS", result.size());
+    log_stage(marker);
+    status = result.empty() ? "AniList returned no currently airing anime." : "Live AniList currently airing data";
+    return result;
+}
+
 struct AniListEntry
 {
     std::string listStatus;
@@ -1910,6 +1940,8 @@ public:
     {
         if (m_loader.joinable())
             m_loader.join();
+        if (m_airingLoader.joinable())
+            m_airingLoader.join();
         if (m_accountLoader.joinable())
             m_accountLoader.join();
     }
@@ -1932,6 +1964,7 @@ public:
     {
         m_status = dynamic_cast<brls::Label*>(getView("home/status"));
         m_cards = dynamic_cast<brls::Box*>(getView("home/trending/cards"));
+        m_latestCards = dynamic_cast<brls::Box*>(getView("home/latest/cards"));
         m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
         m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
         m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
@@ -1974,6 +2007,19 @@ public:
                 m_ready.store(true, std::memory_order_release);
             });
         }
+        if (m_latestCards && !m_airingLoader.joinable())
+        {
+            m_airingLoader = std::thread([this] {
+                m_airingItems = fetch_currently_airing_media(6, m_airingStatus);
+                for (SaikouAnime& anime : m_airingItems)
+                {
+                    anime.posterPath = cached_cover_path(anime.id);
+                    if (!download_image(anime.coverUrl, anime.posterPath))
+                        anime.posterPath.clear();
+                }
+                m_airingReady.store(true, std::memory_order_release);
+            });
+        }
     }
 
     void tick()
@@ -1985,6 +2031,18 @@ public:
             render_horizontal_anime_cards(m_cards, m_items);
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
+
+            m_attached = true;
+            log_stage("ANILIST HOME CARDS ATTACHED");
+        }
+
+        if (m_airingReady.load(std::memory_order_acquire))
+        {
+            if (m_airingLoader.joinable())
+                m_airingLoader.join();
+            render_horizontal_anime_cards(m_latestCards, m_airingItems);
+            m_airingReady.store(false, std::memory_order_release);
+        }
             update_continue_card();
             m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
@@ -2015,8 +2073,10 @@ public:
 
 private:
     std::thread m_loader;
+    std::thread m_airingLoader;
     std::thread m_accountLoader;
     std::atomic<bool> m_ready{ false };
+    std::atomic<bool> m_airingReady{ false };
     std::atomic<bool> m_accountReady{ false };
     bool m_attached = false;
     bool m_accountLoading = false;
@@ -2024,11 +2084,14 @@ private:
     int m_continueProgress = 0;
     unsigned int m_accountRevision = 0;
     std::vector<SaikouAnime> m_items;
+    std::vector<SaikouAnime> m_airingItems;
     SaikouAnime m_continueAnime;
     std::string m_loadStatus;
+    std::string m_airingStatus;
     std::string m_continueMessage;
     brls::Label* m_status = nullptr;
     brls::Box* m_cards = nullptr;
+    brls::Box* m_latestCards = nullptr;
     brls::Box* m_continueBox = nullptr;
     brls::Label* m_continueTitle = nullptr;
     brls::Label* m_continueSubtitle = nullptr;
