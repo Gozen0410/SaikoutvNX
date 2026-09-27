@@ -472,21 +472,30 @@ static std::vector<SaikouAnime> parse_anilist_media(const std::string& response)
     return media;
 }
 
-static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, int pageSize, std::string& status)
+static std::vector<SaikouAnime> fetch_anilist_media(
+    const std::string& search, int pageSize, std::string& status,
+    int page = 1, const char* sort = "TRENDING_DESC", const char* mediaStatus = nullptr)
 {
     static const std::string endpoint = "https://graphql.anilist.co";
+    std::string mediaArgs =
+        "media(type: ANIME, sort: [" + std::string(sort) + "]";
+    if (mediaStatus && *mediaStatus)
+        mediaArgs += ", status: " + std::string(mediaStatus);
+    mediaArgs += ", search: $search)";
+
     const std::string query =
         "query ($page: Int, $perPage: Int, $search: String) { "
-        "Page(page: $page, perPage: $perPage) { "
-        "media(type: ANIME, sort: TRENDING_DESC, search: $search) { "
+        "Page(page: $page, perPage: $perPage) { " +
+        mediaArgs + " { "
         "id title { english romaji native userPreferred } "
         "coverImage { large extraLarge } bannerImage averageScore format status episodes "
         "description(asHtml: false) "
         "} } }";
 
-    std::string body = "{\"query\":" + json_quote(query) +
-        ",\"variables\":{\"page\":1,\"perPage\":" + std::to_string(pageSize) +
-        ",\"search\":" + (search.empty() ? "null" : json_quote(search)) + "}}";
+    std::string body = "{"query":" + json_quote(query) +
+        ","variables":{"page":" + std::to_string(page) +
+        ","perPage":" + std::to_string(pageSize) +
+        ","search":" + (search.empty() ? "null" : json_quote(search)) + "}}";
     std::string response;
     if (!http_request(endpoint, &body, response, 12))
     {
@@ -496,8 +505,8 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
     }
 
     std::vector<SaikouAnime> result = parse_anilist_media(response);
-    char marker[96];
-    std::snprintf(marker, sizeof(marker), "ANILIST MEDIA FOUND %zu ITEMS", result.size());
+    char marker[128];
+    std::snprintf(marker, sizeof(marker), "ANILIST MEDIA FOUND %zu ITEMS PAGE %d", result.size(), page);
     log_stage(marker);
     status = result.empty() ? "AniList returned no anime." : "Live AniList data";
     return result;
@@ -1034,29 +1043,57 @@ static brls::Box* make_anime_card(const SaikouAnime& anime, const std::string& s
     return card;
 }
 
-static void render_horizontal_anime_cards(brls::Box* container, const std::vector<SaikouAnime>& items)
+static brls::Box* make_load_more_card(const char* label, std::function<void()> callback)
 {
-    if (!container) return;
+    brls::Box* card = new brls::Box(brls::Axis::COLUMN);
+    card->setWidth(184.0f);
+    card->setHeight(244.0f);
+    card->setPadding(10.0f);
+    card->setMargins(3, 7, 3, 0);
+    card->setBackgroundColor(nvgRGB(27, 34, 48));
+    card->setBorderColor(nvgRGB(48, 57, 74));
+    card->setBorderThickness(1.0f);
+    card->setCornerRadius(9.0f);
+    card->setFocusable(true);
+    card->setJustifyContent(brls::JustifyContent::CENTER);
+    card->setAlignItems(brls::AlignItems::CENTER);
+
+    brls::Label* load = new brls::Label();
+    load->setText(label);
+    load->setFontSize(16.0f);
+    load->setTextColor(nvgRGB(244, 246, 250));
+    load->setSingleLine(false);
+    load->setFocusable(false);
+    card->addView(load);
+
+    card->registerAction(label, brls::BUTTON_A, [callback](brls::View*) {
+        callback();
+        return true;
+    });
+    return card;
+}
+
+static void render_home_horizontal_section(
+    brls::Box* container,
+    const std::vector<SaikouAnime>& items,
+    const char* loadMoreLabel,
+    std::function<void()> loadMoreCallback)
+{
+    if (!container)
+        return;
+
     clear_box(container);
 
     brls::Box* row = new brls::Box(brls::Axis::ROW);
-    row->setWidth(std::max(1160.0f, static_cast<float>(items.size()) * 190.0f));
+    row->setWidth(static_cast<float>(items.size() + 1) * 190.0f);
     row->setHeight(252.0f);
     row->setAlignItems(brls::AlignItems::FLEX_START);
 
     for (const SaikouAnime& anime : items)
         row->addView(make_anime_card(anime));
 
+    row->addView(make_load_more_card(loadMoreLabel, std::move(loadMoreCallback)));
     container->addView(row);
-
-    if (items.empty())
-    {
-        brls::Label* empty = new brls::Label();
-        empty->setText("No titles to show.");
-        empty->setFontSize(16.0f);
-        empty->setTextColor(nvgRGB(174, 184, 200));
-        row->addView(empty);
-    }
 }
 
 static void render_anime_cards(brls::Box* container, const std::vector<SaikouAnime>& items)
@@ -1897,6 +1934,186 @@ static void fetch_continue_watching(const std::string& token, SaikouAnime& anime
         : ("@" + username + " is linked. No Watching entries yet.");
 }
 
+enum class HomeCatalogType
+{
+    TRENDING,
+    AIRING
+};
+
+class HomeCatalogActivity : public brls::Activity
+{
+public:
+    HomeCatalogActivity(HomeCatalogType type, std::string title)
+        : m_type(type), m_title(std::move(title))
+    {
+    }
+
+    ~HomeCatalogActivity() override
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
+        root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
+        root->setPadding(30.0f);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText(m_title);
+        heading->setFontSize(30.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        m_statusLabel = new brls::Label();
+        m_statusLabel->setText("Loading...");
+        m_statusLabel->setFontSize(14.0f);
+        m_statusLabel->setTextColor(nvgRGB(174, 184, 200));
+        m_statusLabel->setMargins(0, 6, 0, 0);
+        root->addView(m_statusLabel);
+
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(590.0f);
+        m_scroll->setMargins(0, 12, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
+        m_grid = new brls::Box(brls::Axis::COLUMN);
+        m_grid->setWidth(1160.0f);
+        m_grid->setHeight(2200.0f);
+        m_scroll->setContentView(m_grid);
+        root->addView(m_scroll);
+
+        return root;
+    }
+
+    void onContentAvailable() override
+    {
+        start_load(2);
+    }
+
+    void tick()
+    {
+        if (!m_ready.load(std::memory_order_acquire))
+            return;
+
+        if (m_worker.joinable())
+            m_worker.join();
+
+        render_grid();
+        m_ready.store(false, std::memory_order_release);
+        m_loading = false;
+    }
+
+private:
+    HomeCatalogType m_type;
+    std::string m_title;
+    brls::Label* m_statusLabel = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
+    brls::Box* m_grid = nullptr;
+    std::vector<SaikouAnime> m_items;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    bool m_loading = false;
+    int m_page = 2;
+    std::string m_loadStatus;
+
+    void start_load(int page)
+    {
+        if (m_loading)
+            return;
+
+        if (m_worker.joinable())
+            m_worker.join();
+
+        m_page = page;
+        m_loading = true;
+        m_ready.store(false, std::memory_order_release);
+        if (m_statusLabel)
+            m_statusLabel->setText("Loading AniList titles...");
+
+        m_worker = std::thread([this] {
+            const bool airing = m_type == HomeCatalogType::AIRING;
+            m_items = fetch_anilist_media(
+                "", 20, m_loadStatus, m_page,
+                "TRENDING_DESC", airing ? "RELEASING" : nullptr);
+
+            for (SaikouAnime& anime : m_items)
+            {
+                anime.posterPath = cached_cover_path(anime.id);
+                if (!download_image(anime.coverUrl, anime.posterPath))
+                    anime.posterPath.clear();
+            }
+
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
+
+    void render_grid()
+    {
+        if (!m_grid)
+            return;
+
+        clear_box(m_grid);
+
+        constexpr size_t perRow = 6;
+        constexpr float rowWidth = 1160.0f;
+        constexpr float rowHeight = 252.0f;
+
+        for (size_t start = 0; start < m_items.size(); start += perRow)
+        {
+            brls::Box* row = new brls::Box(brls::Axis::ROW);
+            row->setWidth(rowWidth);
+            row->setHeight(rowHeight);
+            row->setAlignItems(brls::AlignItems::FLEX_START);
+
+            const size_t stop = std::min(m_items.size(), start + perRow);
+            for (size_t i = start; i < stop; ++i)
+                row->addView(make_anime_card(m_items[i]));
+
+            m_grid->addView(row);
+        }
+
+        if (m_items.size() >= 20)
+        {
+            brls::Box* more = new brls::Box(brls::Axis::ROW);
+            more->setWidth(rowWidth);
+            more->setHeight(58.0f);
+            more->setMargins(0, 8, 0, 0);
+            more->setPadding(18.0f);
+            more->setBackgroundColor(nvgRGB(27, 34, 48));
+            more->setBorderColor(nvgRGB(48, 57, 74));
+            more->setBorderThickness(1.0f);
+            more->setCornerRadius(9.0f);
+            more->setFocusable(true);
+
+            brls::Label* label = new brls::Label();
+            label->setText("LOAD NEXT 20");
+            label->setFontSize(16.0f);
+            label->setTextColor(nvgRGB(244, 246, 250));
+            label->setFocusable(false);
+            more->addView(label);
+
+            more->registerAction("Load next page", brls::BUTTON_A, [this](brls::View*) {
+                start_load(m_page + 1);
+                return true;
+            });
+            m_grid->addView(more);
+        }
+
+        if (m_statusLabel)
+        {
+            std::string status = m_loadStatus.empty() ? "AniList" : m_loadStatus;
+            status += " — page " + std::to_string(m_page);
+            m_statusLabel->setText(status);
+        }
+    }
+};
+
 class HomeActivity : public brls::Activity
 {
 public:
@@ -1904,6 +2121,8 @@ public:
     {
         if (m_loader.joinable())
             m_loader.join();
+        if (m_airingLoader.joinable())
+            m_airingLoader.join();
         if (m_accountLoader.joinable())
             m_accountLoader.join();
     }
@@ -1926,6 +2145,7 @@ public:
     {
         m_status = dynamic_cast<brls::Label*>(getView("home/status"));
         m_cards = dynamic_cast<brls::Box*>(getView("home/trending/cards"));
+        m_latestCards = dynamic_cast<brls::Box*>(getView("home/latest/cards"));
         m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
         m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
         m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
@@ -1952,11 +2172,14 @@ public:
             brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::NONE);
         });
         connect_navigation("nav/home", "Home", [] {});
-        if (m_status) m_status->setText("Loading live AniList trending titles...");
+
+        if (m_status)
+            m_status->setText("Loading live AniList trending titles...");
+
         if (!m_loader.joinable())
         {
             m_loader = std::thread([this] {
-                m_items = fetch_anilist_media("", 24, m_loadStatus);
+                m_items = fetch_anilist_media("", 20, m_loadStatus, 1, "TRENDING_DESC", nullptr);
                 for (SaikouAnime& anime : m_items)
                 {
                     anime.posterPath = cached_cover_path(anime.id);
@@ -1968,6 +2191,20 @@ public:
                 m_ready.store(true, std::memory_order_release);
             });
         }
+
+        if (m_latestCards && !m_airingLoader.joinable())
+        {
+            m_airingLoader = std::thread([this] {
+                m_airingItems = fetch_anilist_media("", 20, m_airingStatus, 1, "TRENDING_DESC", "RELEASING");
+                for (SaikouAnime& anime : m_airingItems)
+                {
+                    anime.posterPath = cached_cover_path(anime.id);
+                    if (!download_image(anime.coverUrl, anime.posterPath))
+                        anime.posterPath.clear();
+                }
+                m_airingReady.store(true, std::memory_order_release);
+            });
+        }
     }
 
     void tick()
@@ -1976,12 +2213,36 @@ public:
         {
             if (m_loader.joinable())
                 m_loader.join();
-            render_horizontal_anime_cards(m_cards, m_items);
+
+            render_home_horizontal_section(
+                m_cards, m_items, "LOAD MORE",
+                [this] {
+                    brls::Application::pushActivity(
+                        new HomeCatalogActivity(HomeCatalogType::TRENDING, "TRENDING ANIME"),
+                        brls::TransitionAnimation::NONE);
+                });
+
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
             update_continue_card();
             m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
+        }
+
+        if (m_airingReady.load(std::memory_order_acquire))
+        {
+            if (m_airingLoader.joinable())
+                m_airingLoader.join();
+
+            render_home_horizontal_section(
+                m_latestCards, m_airingItems, "LOAD MORE",
+                [this] {
+                    brls::Application::pushActivity(
+                        new HomeCatalogActivity(HomeCatalogType::AIRING, "CURRENTLY AIRING"),
+                        brls::TransitionAnimation::NONE);
+                });
+
+            m_airingReady.store(false, std::memory_order_release);
         }
 
         if (m_attached && m_accountReady.load(std::memory_order_acquire))
@@ -2001,7 +2262,7 @@ public:
             m_accountReady.store(false, std::memory_order_release);
             m_accountLoader = std::thread([this] {
                 fetch_continue_watching(load_anilist_token(), m_continueAnime,
-                    m_continueProgress, m_hasContinue, m_continueMessage);
+                    m_continueProgress, m_continueMessage);
                 m_accountReady.store(true, std::memory_order_release);
             });
         }
@@ -2009,8 +2270,10 @@ public:
 
 private:
     std::thread m_loader;
+    std::thread m_airingLoader;
     std::thread m_accountLoader;
     std::atomic<bool> m_ready{ false };
+    std::atomic<bool> m_airingReady{ false };
     std::atomic<bool> m_accountReady{ false };
     bool m_attached = false;
     bool m_accountLoading = false;
@@ -2018,11 +2281,14 @@ private:
     int m_continueProgress = 0;
     unsigned int m_accountRevision = 0;
     std::vector<SaikouAnime> m_items;
+    std::vector<SaikouAnime> m_airingItems;
     SaikouAnime m_continueAnime;
     std::string m_loadStatus;
+    std::string m_airingStatus;
     std::string m_continueMessage;
     brls::Label* m_status = nullptr;
     brls::Box* m_cards = nullptr;
+    brls::Box* m_latestCards = nullptr;
     brls::Box* m_continueBox = nullptr;
     brls::Label* m_continueTitle = nullptr;
     brls::Label* m_continueSubtitle = nullptr;
