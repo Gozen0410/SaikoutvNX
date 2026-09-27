@@ -1,3 +1,4 @@
+# Build trigger: rebuild the hardware-tested main baseline.
 name: Switch Homebrew
 
 on:
