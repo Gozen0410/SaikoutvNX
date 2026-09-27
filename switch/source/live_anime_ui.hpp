@@ -46,6 +46,8 @@ static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true 
 static int g_selectedApiSource = 0;
 static bool g_restoreGlobalQuitAfterKeyboard = false;
 static std::atomic<unsigned int> g_anilistAccountRevision{ 0 };
+static bool g_socketOwned = false;
+static bool g_curlOwned = false;
 static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini";
 static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
@@ -70,10 +72,9 @@ static bool ensure_network_ready()
 {
     static std::once_flag once;
     static Result socketResult = MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized);
-    static bool socketOwned = false;
     std::call_once(once, [] {
         socketResult = socketInitializeDefault();
-        socketOwned = R_SUCCEEDED(socketResult);
+        g_socketOwned = R_SUCCEEDED(socketResult);
     });
     return R_SUCCEEDED(socketResult) ||
         socketResult == MAKERESULT(Module_Libnx, LibnxError_AlreadyInitialized);
@@ -83,8 +84,33 @@ static bool ensure_curl_ready()
 {
     static std::once_flag once;
     static CURLcode result = CURLE_FAILED_INIT;
-    std::call_once(once, [] { result = curl_global_init(CURL_GLOBAL_DEFAULT); });
+    std::call_once(once, [] {
+        result = curl_global_init(CURL_GLOBAL_DEFAULT);
+        g_curlOwned = result == CURLE_OK;
+    });
     return result == CURLE_OK;
+}
+
+static void shutdown_network()
+{
+    // All activity-owned network workers are joined during Borealis Application::exit()
+    // before libnx calls userAppExit(). Release cURL first, then our socket service.
+    if (g_curlOwned)
+    {
+        curl_global_cleanup();
+        g_curlOwned = false;
+    }
+
+    if (g_socketOwned)
+    {
+        socketExit();
+        g_socketOwned = false;
+    }
+}
+
+extern "C" void userAppExit(void)
+{
+    shutdown_network();
 }
 
 static size_t append_http_data(char* data, size_t size, size_t count, void* userdata)
