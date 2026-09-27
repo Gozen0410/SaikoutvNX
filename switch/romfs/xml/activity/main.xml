@@ -25,5 +25,7 @@
         <brls:Label width="auto" height="auto" text="TRENDING" fontSize="19" textColor="#DCE4F0" />
         <brls:Label width="auto" height="auto" text="Live AniList titles, posters, and scores" fontSize="13" textColor="#8793A6" />
     </brls:Box>
-    <brls:Box id="home/trending/cards" width="auto" height="260" axis="column" marginTop="5" />
+    <brls:HScrollingFrame id="home/trending/scroll" width="auto" height="260" marginTop="5" scrollingBehavior="natural">
+        <brls:Box id="home/trending/cards" width="4560" height="260" axis="row" />
+    </brls:HScrollingFrame>
 </brls:Box>
