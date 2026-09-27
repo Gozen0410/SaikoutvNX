@@ -2043,10 +2043,6 @@ public:
             render_horizontal_anime_cards(m_latestCards, m_airingItems);
             m_airingReady.store(false, std::memory_order_release);
         }
-            update_continue_card();
-            m_attached = true;
-            log_stage("ANILIST HOME CARDS ATTACHED");
-        }
 
         if (m_attached && m_accountReady.load(std::memory_order_acquire))
         {
