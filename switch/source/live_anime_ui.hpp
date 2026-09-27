@@ -1039,8 +1039,14 @@ static void render_horizontal_anime_cards(brls::Box* container, const std::vecto
     if (!container) return;
     clear_box(container);
 
+    // Keep the HScrollingFrame content view wide enough to contain the complete
+    // card footprint, including its horizontal margins, so the final card remains
+    // reachable by focus/navigation.
+    const float contentWidth = std::max(1160.0f, static_cast<float>(items.size()) * 192.0f);
+    container->setWidth(contentWidth);
+
     brls::Box* row = new brls::Box(brls::Axis::ROW);
-    row->setWidth(std::max(1160.0f, static_cast<float>(items.size()) * 190.0f));
+    row->setWidth(contentWidth);
     row->setHeight(252.0f);
     row->setAlignItems(brls::AlignItems::FLEX_START);
 
