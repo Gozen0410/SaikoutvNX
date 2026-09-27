@@ -492,10 +492,10 @@ static std::vector<SaikouAnime> fetch_anilist_media(
         "description(asHtml: false) "
         "} } }";
 
-    std::string body = "{"query":" + json_quote(query) +
-        ","variables":{"page":" + std::to_string(page) +
-        ","perPage":" + std::to_string(pageSize) +
-        ","search":" + (search.empty() ? "null" : json_quote(search)) + "}}";
+    std::string body = "{\"query\":" + json_quote(query) +
+        ",\"variables\":{\"page\":" + std::to_string(page) +
+        ",\"perPage\":" + std::to_string(pageSize) +
+        ",\"search\":" + (search.empty() ? "null" : json_quote(search)) + "}}";
     std::string response;
     if (!http_request(endpoint, &body, response, 12))
     {
