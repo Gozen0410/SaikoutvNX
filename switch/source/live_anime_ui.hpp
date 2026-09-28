@@ -2122,6 +2122,7 @@ public:
         m_cards = dynamic_cast<brls::Box*>(getView("home/trending/cards"));
         m_latestCards = dynamic_cast<brls::Box*>(getView("home/latest/cards"));
         m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
+        m_continueScroll = getView("home/continue/scroll");
         m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
         m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
         m_accountRevision = g_anilistAccountRevision.load(std::memory_order_acquire);
@@ -2187,6 +2188,24 @@ public:
 
     void tick()
     {
+        // HScrollingFrame can receive focus itself when entering the section.
+        // Once its dynamic card row exists, explicitly hand focus to the first
+        // actual anime card so A/LEFT/RIGHT operate on the card, not the frame.
+        if (m_continueScroll && !m_continueItems.empty())
+        {
+            brls::View* currentFocus = brls::Application::getCurrentFocus();
+            if (currentFocus == m_continueScroll && !m_continueBox->getChildren().empty())
+            {
+                brls::View* row = m_continueBox->getChildren().front();
+                if (row)
+                {
+                    brls::View* card = row->getDefaultFocus();
+                    if (card)
+                        brls::Application::giveFocus(card);
+                }
+            }
+        }
+
         if (!m_attached && m_ready.load(std::memory_order_acquire))
         {
             if (m_loader.joinable())
@@ -2267,6 +2286,7 @@ private:
     brls::Label* m_status = nullptr;
     brls::Box* m_cards = nullptr;
     brls::Box* m_latestCards = nullptr;
+    brls::View* m_continueScroll = nullptr;
     brls::Box* m_continueBox = nullptr;
     brls::Label* m_continueTitle = nullptr;
     brls::Label* m_continueSubtitle = nullptr;
