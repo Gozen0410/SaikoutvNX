@@ -1692,6 +1692,9 @@ public:
         root->setPadding(34.0f);
         root->setBackgroundColor(nvgRGB(16, 20, 29));
 
+        m_pairCode = 10000u +
+            static_cast<uint32_t>(randomGet64() % 90000u);
+
         brls::Label* heading = new brls::Label();
         heading->setText("LINK YOUR ANILIST ACCOUNT");
         heading->setFontSize(28.0f);
@@ -1701,14 +1704,36 @@ public:
 
         brls::Label* instructions = new brls::Label();
         instructions->setText(
-            "Your requested flow is a 3-digit code from Saikou on your phone, entered on the Switch. "
-            "That code exchange is not implemented in this build yet. Keep both devices on the same Wi-Fi.");
+            "This Switch generates a 5-digit pairing code for the current session. "
+            "Use the code with the phone pairing flow while both devices are on the same Wi-Fi.");
         instructions->setFontSize(17.0f);
         instructions->setLineHeight(24.0f);
         instructions->setFocusable(false);
         instructions->setTextColor(nvgRGB(174, 184, 200));
         instructions->setMargins(0, 14, 0, 0);
         root->addView(instructions);
+
+        brls::Label* codeTitle = new brls::Label();
+        codeTitle->setText("PAIRING CODE");
+        codeTitle->setFontSize(18.0f);
+        codeTitle->setFocusable(false);
+        codeTitle->setTextColor(nvgRGB(174, 184, 200));
+        codeTitle->setMargins(0, 22, 0, 0);
+        root->addView(codeTitle);
+
+        m_pairCodeLabel = new brls::Label();
+        char pairCodeText[16];
+        std::snprintf(
+            pairCodeText,
+            sizeof(pairCodeText),
+            "%05u",
+            static_cast<unsigned>(m_pairCode));
+        m_pairCodeLabel->setText(pairCodeText);
+        m_pairCodeLabel->setFontSize(42.0f);
+        m_pairCodeLabel->setFocusable(false);
+        m_pairCodeLabel->setTextColor(nvgRGB(97, 207, 226));
+        m_pairCodeLabel->setMargins(0, 4, 0, 0);
+        root->addView(m_pairCodeLabel);
 
         m_address = get_switch_local_ip();
         brls::Label* address = new brls::Label();
@@ -1785,6 +1810,8 @@ private:
     std::string m_address;
     brls::Label* m_statusLabel = nullptr;
     brls::Padding* m_focusSink = nullptr;
+    brls::Label* m_pairCodeLabel = nullptr;
+    uint32_t m_pairCode = 0;
 
     void set_status(const std::string& message)
     {
