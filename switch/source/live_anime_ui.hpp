@@ -2891,26 +2891,29 @@ public:
         root->addView(heading);
 
         m_scroll = new brls::ScrollingFrame();
-        m_scroll->setWidthPercentage(100.0f);
-        m_scroll->setHeight(590.0f);
-        m_scroll->setMargins(0, 10, 0, 0);
+        m_scroll->setGrow(1.0f);
         m_scroll->setScrollingBehavior(
-            brls::ScrollingBehavior::NATURAL);
+            brls::ScrollingBehavior::CENTERED);
+        m_scroll->setMargins(0, 8, 0, 0);
 
         brls::Box* content =
             new brls::Box(brls::Axis::COLUMN);
-        content->setWidth(1160.0f);
-        content->setHeight(1200.0f);
+        content->setWidthPercentage(100.0f);
+        content->setPadding(0.0f, 0.0f, 80.0f, 0.0f);
+
         m_scroll->setContentView(content);
         root->addView(m_scroll);
 
         brls::Label* accountHeading = new brls::Label();
         accountHeading->setText("ANILIST ACCOUNT");
         accountHeading->setFontSize(19.0f);
-        accountHeading->setMargins(0, 10, 0, 6);
         accountHeading->setTextColor(nvgRGB(220, 228, 240));
         accountHeading->setFocusable(false);
         content->addView(accountHeading);
+
+        brls::Padding* accountTitleGap = new brls::Padding();
+        accountTitleGap->setHeight(8.0f);
+        content->addView(accountTitleGap);
 
         brls::Label* account = new brls::Label();
         account->setText(load_anilist_token().empty()
@@ -2918,15 +2921,17 @@ public:
             : "AniList account token is saved on this Switch.");
         account->setFontSize(15.0f);
         account->setTextColor(nvgRGB(174, 184, 200));
-        account->setMargins(0, 0, 0, 12);
         account->setFocusable(false);
         content->addView(account);
+
+        brls::Padding* accountButtonGap = new brls::Padding();
+        accountButtonGap->setHeight(18.0f);
+        content->addView(accountButtonGap);
 
         brls::Box* pair =
             new brls::Box(brls::Axis::ROW);
         pair->setWidthPercentage(100.0f);
         pair->setHeight(46.0f);
-        pair->setMargins(0, 0, 0, 18);
         pair->setPadding(10.0f);
         pair->setAlignItems(brls::AlignItems::CENTER);
         pair->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -2956,13 +2961,20 @@ public:
             });
         content->addView(pair);
 
+        brls::Padding* pairSourceGap = new brls::Padding();
+        pairSourceGap->setHeight(26.0f);
+        content->addView(pairSourceGap);
+
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 4, 0, 10);
         sourceHeading->setTextColor(nvgRGB(220, 228, 240));
         sourceHeading->setFocusable(false);
         content->addView(sourceHeading);
+
+        brls::Padding* sourceHeaderGap = new brls::Padding();
+        sourceHeaderGap->setHeight(12.0f);
+        content->addView(sourceHeaderGap);
 
         content->addView(make_preferred_source());
 
@@ -2974,14 +2986,17 @@ public:
             "Enable the sources you want available for episode lookup.");
         sourceHint->setFontSize(13.0f);
         sourceHint->setTextColor(nvgRGB(135, 147, 166));
-        sourceHint->setMargins(0, 4, 0, 0);
         sourceHint->setFocusable(false);
+
+        brls::Padding* sourceHintGap = new brls::Padding();
+        sourceHintGap->setHeight(2.0f);
+        content->addView(sourceHintGap);
         content->addView(sourceHint);
 
         brls::Label* aboutHeading = new brls::Label();
         aboutHeading->setText("APP");
         aboutHeading->setFontSize(19.0f);
-        aboutHeading->setMargins(0, 26, 0, 6);
+        aboutHeading->setMargins(0, 22, 0, 6);
         aboutHeading->setTextColor(nvgRGB(220, 228, 240));
         aboutHeading->setFocusable(false);
         content->addView(aboutHeading);
@@ -2994,11 +3009,6 @@ public:
         m_about->setTextColor(nvgRGB(135, 147, 166));
         m_about->setFocusable(false);
         content->addView(m_about);
-
-        brls::Padding* bottomSpacer =
-            new brls::Padding();
-        bottomSpacer->setHeight(120.0f);
-        content->addView(bottomSpacer);
 
         log_stage("SETTINGS VIEW BUILT");
         return root;
