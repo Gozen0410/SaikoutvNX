@@ -2259,6 +2259,11 @@ public:
 
     ~LibraryActivity() override
     {
+        m_coverLifetime->store(false, std::memory_order_release);
+
+        if (m_coverWorker.joinable())
+            m_coverWorker.join();
+
         if (m_worker.joinable())
             m_worker.join();
 
@@ -2397,7 +2402,19 @@ private:
     bool m_loading = false;
     bool m_loaded = false;
 
+    struct CoverJob
+    {
+        brls::Image* image = nullptr;
+        std::string url;
+        std::string path;
+    };
+
     std::vector<brls::HScrollingFrame*> m_categoryScrolls;
+    std::vector<CoverJob> m_pendingCoverJobs;
+    std::thread m_coverWorker;
+    bool m_coverWorkerDone = true;
+    std::shared_ptr<std::atomic<bool>> m_coverLifetime =
+        std::make_shared<std::atomic<bool>>(true);
 
     void build_sections()
     {
@@ -2502,8 +2519,29 @@ private:
                             : entry.listName;
                 }
 
+                brls::Image* poster = nullptr;
+
                 row->addView(
-                    make_anime_card(entry.anime, subtitle));
+                    make_anime_card(
+                        entry.anime,
+                        subtitle,
+                        &poster));
+
+                struct stat st;
+                const std::string coverPath =
+                    cached_cover_path(entry.anime.id);
+
+                if (poster &&
+                    !entry.anime.coverUrl.empty() &&
+                    (stat(coverPath.c_str(), &st) != 0 ||
+                     st.st_size <= 256))
+                {
+                    m_pendingCoverJobs.push_back({
+                        poster,
+                        entry.anime.coverUrl,
+                        coverPath
+                    });
+                }
             }
 
             if (hasMore)
@@ -2551,7 +2589,121 @@ private:
             m_statusLabel->setText(status);
         }
 
+        start_cover_worker();
+
         log_stage("LIBRARY HOME ROWS BUILT");
+    }
+
+    void start_cover_worker()
+    {
+        if (m_pendingCoverJobs.empty())
+        {
+            log_stage(
+                "LIBRARY PROGRESSIVE COVERS: no uncached covers");
+            return;
+        }
+
+        if (m_coverWorker.joinable())
+        {
+            if (!m_coverWorkerDone)
+                return;
+
+            m_coverWorker.join();
+        }
+
+        std::vector<CoverJob> jobs;
+        jobs.swap(m_pendingCoverJobs);
+
+        m_coverWorkerDone = false;
+        const auto lifetime = m_coverLifetime;
+        const size_t total = jobs.size();
+
+        char startMarker[128];
+        std::snprintf(
+            startMarker,
+            sizeof(startMarker),
+            "LIBRARY PROGRESSIVE COVERS START count=%zu",
+            total);
+        log_stage(startMarker);
+
+        m_coverWorker = std::thread(
+            [this, lifetime, jobs = std::move(jobs), total] {
+                size_t completed = 0;
+
+                for (const CoverJob& job : jobs)
+                {
+                    if (!lifetime->load(
+                            std::memory_order_acquire))
+                        return;
+
+                    if (!download_image(job.url, job.path))
+                        continue;
+
+                    ++completed;
+
+                    brls::sync(
+                        [this,
+                         lifetime,
+                         image = job.image,
+                         path = job.path,
+                         completed,
+                         total] {
+                            if (!lifetime->load(
+                                    std::memory_order_acquire))
+                                return;
+
+                            image->setImageFromFile(path);
+
+                            char marker[128];
+                            std::snprintf(
+                                marker,
+                                sizeof(marker),
+                                "LIBRARY PROGRESSIVE COVER READY %zu/%zu",
+                                completed,
+                                total);
+                            log_stage(marker);
+
+                            if (m_statusLabel)
+                            {
+                                m_statusLabel->setText(
+                                    "Loading posters: " +
+                                    std::to_string(completed) +
+                                    " / " +
+                                    std::to_string(total));
+                            }
+                        });
+                }
+
+                brls::sync(
+                    [this, lifetime, completed, total] {
+                        if (!lifetime->load(
+                                std::memory_order_acquire))
+                            return;
+
+                        m_coverWorkerDone = true;
+
+                        std::string status = m_loadStatus;
+                        if (!m_username.empty())
+                            status += "  |  @" + m_username;
+
+                        status +=
+                            "  |  " +
+                            std::to_string(m_entries.size()) +
+                            " library entries";
+
+                        if (m_statusLabel)
+                            m_statusLabel->setText(status);
+
+                        char marker[128];
+                        std::snprintf(
+                            marker,
+                            sizeof(marker),
+                            "LIBRARY PROGRESSIVE COVERS DONE %zu/%zu",
+                            completed,
+                            total);
+                        log_stage(marker);
+                    });
+            });
     }
 
 
