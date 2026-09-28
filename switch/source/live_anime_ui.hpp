@@ -1918,13 +1918,19 @@ public:
         brls::FocusDirection direction,
         brls::View* currentView) override
     {
-        if (!currentView)
-            return brls::Box::getNextFocus(direction, currentView);
+        const auto& rows = getChildren();
+        if (rows.empty())
+            return nullptr;
+
+        // Borealis asks a child row for its next focus and then calls the
+        // grid with that row as currentView. The previous implementation
+        // incorrectly expected currentView to be the anime card itself,
+        // so it fell back to the generic navigation and could escape to the
+        // category tabs.
+        brls::View* actualFocus = brls::Application::getCurrentFocus();
 
         size_t currentRowIndex = SIZE_MAX;
-        size_t currentColumnIndex = SIZE_MAX;
-
-        const auto& rows = getChildren();
+        size_t currentColumnIndex = 0;
 
         for (size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex)
         {
@@ -1933,9 +1939,13 @@ public:
                 continue;
 
             const auto& cards = row->getChildren();
-            for (size_t columnIndex = 0; columnIndex < cards.size(); ++columnIndex)
+
+            // Prefer the actual focused card.
+            for (size_t columnIndex = 0;
+                 columnIndex < cards.size();
+                 ++columnIndex)
             {
-                if (cards[columnIndex] == currentView)
+                if (cards[columnIndex] == actualFocus)
                 {
                     currentRowIndex = rowIndex;
                     currentColumnIndex = columnIndex;
@@ -1945,6 +1955,30 @@ public:
 
             if (currentRowIndex != SIZE_MAX)
                 break;
+
+            // When Borealis passed the row itself, recover the column from
+            // the row's remembered focus. If there is no remembered focus,
+            // use the first card as a deterministic fallback.
+            if (rows[rowIndex] == currentView)
+            {
+                currentRowIndex = rowIndex;
+
+                brls::View* remembered = row->getLastFocusedView();
+                if (remembered)
+                {
+                    for (size_t columnIndex = 0;
+                         columnIndex < cards.size();
+                         ++columnIndex)
+                    {
+                        if (cards[columnIndex] == remembered)
+                        {
+                            currentColumnIndex = columnIndex;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
         }
 
         if (currentRowIndex == SIZE_MAX)
@@ -1952,7 +1986,7 @@ public:
 
         brls::Box* currentRow =
             dynamic_cast<brls::Box*>(rows[currentRowIndex]);
-        if (!currentRow)
+        if (!currentRow || currentRow->getChildren().empty())
             return nullptr;
 
         const auto& currentCards = currentRow->getChildren();
@@ -1971,8 +2005,8 @@ public:
 
         case brls::FocusDirection::UP:
             if (currentRowIndex == 0)
-                // Let the parent focus tree handle leaving the grid from the
-                // first row (back to the category tabs).
+                // Only the first row may hand UP navigation back to the
+                // category controls above the scrolling area.
                 return nullptr;
 
             {
@@ -1997,8 +2031,6 @@ public:
                 if (!nextRow || nextRow->getChildren().empty())
                     return nullptr;
 
-                // The last row can contain the single Load More card, so
-                // preserve the useful vertical path by targeting it directly.
                 const size_t column =
                     std::min(currentColumnIndex,
                              nextRow->getChildren().size() - 1);
@@ -2009,6 +2041,7 @@ public:
         return nullptr;
     }
 };
+
 
 class LibraryActivity : public brls::Activity
 {
