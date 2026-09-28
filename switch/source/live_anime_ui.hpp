@@ -2549,7 +2549,7 @@ private:
                 "LIBRARY CONTINUE ROW BUILT count=0");
         }
 
-        for (size_t category = 0;
+        for (size_t category = 1;
              category < kCategoryCount;
              ++category)
         {
@@ -2697,7 +2697,7 @@ private:
             std::max(
                 700.0f,
                 static_cast<float>(
-                    kCategoryCount * 304 +
+                    (kCategoryCount - 1) * 304 +
                     (!continueEntries.empty()
                         ? 304
                         : 0) +
