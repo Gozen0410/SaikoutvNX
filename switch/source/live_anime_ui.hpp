@@ -1201,6 +1201,11 @@ static void render_anime_cards(brls::Box* container, const std::vector<SaikouAni
     }
 }
 
+// Shared by Search, Trending, Currently Airing, and Continue Watching.
+// Keep the implementation below the activity definitions, but declare it here
+// so earlier activity classes can safely reference the shared Load More UI.
+static brls::Box* make_home_load_more_card(std::function<void()> callback);
+
 class SearchActivity;
 static SearchActivity* g_searchActivity = nullptr;
 
