@@ -2543,8 +2543,13 @@ public:
 
     ~TrendingCatalogActivity() override
     {
+        m_coverLifetime->store(false, std::memory_order_release);
+
         if (m_worker.joinable())
             m_worker.join();
+        if (m_coverWorker.joinable())
+            m_coverWorker.join();
+
         if (g_trendingCatalogActivity == this)
             g_trendingCatalogActivity = nullptr;
     }
@@ -2592,38 +2597,58 @@ public:
 
     void tick()
     {
-        if (!m_ready.load(std::memory_order_acquire))
-            return;
-
-        if (m_worker.joinable())
-            m_worker.join();
-
-        render_grid();
-        m_ready.store(false, std::memory_order_release);
-        m_loading = false;
-
-        if (m_status)
+        if (m_ready.load(std::memory_order_acquire))
         {
-            std::string label = "Loaded " + std::to_string(m_items.size()) +
-                " trending anime";
-            if (m_hasMore)
-                label += " — select LOAD MORE for another 30";
-            else
-                label += " — end of results";
-            m_status->setText(label);
+            if (m_worker.joinable())
+                m_worker.join();
+
+            append_loaded_items();
+            m_ready.store(false, std::memory_order_release);
+            m_loading = false;
+
+            if (m_status)
+            {
+                std::string label = "Loaded " +
+                    std::to_string(m_items.size()) + " trending anime";
+                if (m_hasMore)
+                    label += " — select LOAD MORE for another 30";
+                else
+                    label += " — end of results";
+                m_status->setText(label);
+            }
         }
+
+        start_pending_cover_worker();
     }
 
 private:
+    struct CoverJob
+    {
+        brls::Image* image = nullptr;
+        std::string url;
+        std::string path;
+    };
+
     brls::Label* m_status = nullptr;
     brls::ScrollingFrame* m_scroll = nullptr;
     brls::Box* m_grid = nullptr;
+
     std::vector<SaikouAnime> m_items;
     std::thread m_worker;
+    std::thread m_coverWorker;
     std::atomic<bool> m_ready{ false };
+    std::shared_ptr<std::atomic<bool>> m_coverLifetime =
+        std::make_shared<std::atomic<bool>>(true);
+
+    std::vector<CoverJob> m_pendingCoverJobs;
+    size_t m_coverCompleted = 0;
+    size_t m_coverTotal = 0;
+    bool m_coverWorkerDone = true;
+
     bool m_loading = false;
     bool m_hasMore = true;
     int m_page = 0;
+    size_t m_renderedCount = 0;
 
     void start_load(int page)
     {
@@ -2642,11 +2667,7 @@ private:
                 fetch_anilist_trending_page(page, 30, status);
 
             for (SaikouAnime& anime : newItems)
-            {
                 anime.posterPath = cached_cover_path(anime.id);
-                if (!download_image(anime.coverUrl, anime.posterPath))
-                    anime.posterPath.clear();
-            }
 
             if (newItems.size() < 30)
                 m_hasMore = false;
@@ -2657,31 +2678,88 @@ private:
         });
     }
 
-    void render_grid()
+    void append_loaded_items()
     {
         if (!m_grid)
             return;
-
-        clear_box(m_grid);
 
         constexpr size_t perRow = 6;
         constexpr float rowWidth = 1160.0f;
         constexpr float rowHeight = 252.0f;
 
-        size_t index = 0;
+        size_t index = m_renderedCount;
+
+        // The Load More row stays alive while fetching metadata. Remove it only
+        // after the new metadata is ready, and move focus off it first if needed.
+        if (!m_grid->getChildren().empty() && m_renderedCount > 0)
+        {
+            brls::View* last = m_grid->getChildren().back();
+            brls::Box* moreRow = dynamic_cast<brls::Box*>(last);
+            if (moreRow && moreRow->getChildren().size() == 1 &&
+                moreRow->getChildren().front()->isFocusable())
+            {
+                brls::View* currentFocus =
+                    brls::Application::getCurrentFocus();
+                if (currentFocus == moreRow->getChildren().front())
+                {
+                    const auto& rows = m_grid->getChildren();
+                    if (rows.size() >= 2)
+                    {
+                        brls::Box* previousRow =
+                            dynamic_cast<brls::Box*>(rows[rows.size() - 2]);
+                        if (previousRow && !previousRow->getChildren().empty())
+                            brls::Application::giveFocus(
+                                previousRow->getChildren().back());
+                    }
+                }
+
+                m_grid->removeView(moreRow);
+            }
+        }
+
         while (index < m_items.size())
         {
-            brls::Box* row = new brls::Box(brls::Axis::ROW);
-            row->setWidth(rowWidth);
-            row->setHeight(rowHeight);
-            row->setAlignItems(brls::AlignItems::FLEX_START);
+            brls::Box* row = nullptr;
 
-            const size_t stop = std::min(m_items.size(), index + perRow);
-            for (; index < stop; ++index)
-                row->addView(make_anime_card(m_items[index]));
+            if (!m_grid->getChildren().empty())
+            {
+                brls::View* last = m_grid->getChildren().back();
+                row = dynamic_cast<brls::Box*>(last);
+                if (row && row->getChildren().size() >= perRow)
+                    row = nullptr;
+            }
 
-            m_grid->addView(row);
+            if (!row)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_grid->addView(row);
+            }
+
+            while (index < m_items.size() &&
+                   row->getChildren().size() < perRow)
+            {
+                brls::Image* image = nullptr;
+                row->addView(
+                    make_anime_card(m_items[index], std::string(), &image));
+
+                struct stat st;
+                const std::string path =
+                    cached_cover_path(m_items[index].id);
+                if (image && !m_items[index].coverUrl.empty() &&
+                    (stat(path.c_str(), &st) != 0 || st.st_size <= 256))
+                {
+                    m_pendingCoverJobs.push_back(
+                        { image, m_items[index].coverUrl, path });
+                }
+
+                ++index;
+            }
         }
+
+        m_renderedCount = m_items.size();
 
         if (m_hasMore)
         {
@@ -2689,6 +2767,7 @@ private:
             moreRow->setWidth(rowWidth);
             moreRow->setHeight(rowHeight);
             moreRow->setAlignItems(brls::AlignItems::FLEX_START);
+
             moreRow->addView(make_home_load_more_card([this] {
                 start_load(m_page + 1);
             }));
@@ -2696,12 +2775,101 @@ private:
         }
 
         const size_t dataRows =
-            (m_items.size() + perRow - 1) / perRow;
+            (m_renderedCount + perRow - 1) / perRow;
         const size_t totalRows = dataRows + (m_hasMore ? 1 : 0);
         m_grid->setHeight(
             std::max(600.0f, static_cast<float>(totalRows) * rowHeight + 20.0f));
+
+        if (m_pendingCoverJobs.empty())
+        {
+            if (m_status)
+                m_status->setText("Trending ready — select a poster for details.");
+        }
+        else if (m_status)
+        {
+            m_status->setText(
+                "Loading posters: 0 / " +
+                std::to_string(m_pendingCoverJobs.size()));
+        }
+    }
+
+    void start_pending_cover_worker()
+    {
+        if (m_pendingCoverJobs.empty())
+            return;
+
+        if (m_coverWorker.joinable())
+        {
+            if (!m_coverWorkerDone)
+                return;
+
+            m_coverWorker.join();
+        }
+
+        std::vector<CoverJob> jobs;
+        jobs.swap(m_pendingCoverJobs);
+
+        m_coverCompleted = 0;
+        m_coverTotal = jobs.size();
+        m_coverWorkerDone = false;
+
+        const auto lifetime = m_coverLifetime;
+        perf_log_count("TRENDING PROGRESSIVE COVERS START", jobs.size());
+
+        m_coverWorker = std::thread(
+            [this, lifetime, jobs = std::move(jobs)] {
+                size_t completed = 0;
+
+                for (const CoverJob& job : jobs)
+                {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    if (!download_image(job.url, job.path))
+                        continue;
+
+                    ++completed;
+
+                    brls::sync([this, lifetime, image = job.image,
+                        path = job.path, completed, total = jobs.size()] {
+                        if (!lifetime->load(std::memory_order_acquire))
+                            return;
+
+                        image->setImageFromFile(path);
+                        m_coverCompleted = completed;
+
+                        if (m_status)
+                        {
+                            m_status->setText(
+                                "Loading posters: " +
+                                std::to_string(completed) + " / " +
+                                std::to_string(total));
+                        }
+                    });
+                }
+
+                brls::sync([this, lifetime, completed, total = jobs.size()] {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    m_coverCompleted = completed;
+                    m_coverWorkerDone = true;
+
+                    if (m_status)
+                    {
+                        m_status->setText(
+                            "Trending ready — " +
+                            std::to_string(completed) + " / " +
+                            std::to_string(total) + " posters loaded.");
+                    }
+
+                    perf_log_count(
+                        "TRENDING PROGRESSIVE COVERS DONE", completed);
+                });
+            });
     }
 };
+
 
 class AiringCatalogActivity;
 static AiringCatalogActivity* g_airingCatalogActivity = nullptr;
