@@ -476,7 +476,8 @@ static std::vector<SaikouAnime> parse_anilist_media(
     return media;
 }
 
-static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, int pageSize, std::string& status)
+static std::vector<SaikouAnime> fetch_anilist_media(
+    const std::string& search, int pageSize, std::string& status, int page = 1)
 {
     static const std::string endpoint = "https://graphql.anilist.co";
     const std::string query =
@@ -489,7 +490,7 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
         "} } }";
 
     std::string body = "{\"query\":" + json_quote(query) +
-        ",\"variables\":{\"page\":1,\"perPage\":" + std::to_string(pageSize) +
+        ",\"variables\":{\"page\":" + std::to_string(page) + ",\"perPage\":" + std::to_string(pageSize) +
         ",\"search\":" + (search.empty() ? "null" : json_quote(search)) + "}}";
     std::string response;
     if (!http_request(endpoint, &body, response, 12))
@@ -501,7 +502,8 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
 
     std::vector<SaikouAnime> result = parse_anilist_media(response);
     char marker[96];
-    std::snprintf(marker, sizeof(marker), "ANILIST MEDIA FOUND %zu ITEMS", result.size());
+    std::snprintf(marker, sizeof(marker),
+        "ANILIST MEDIA PAGE %d FOUND %zu ITEMS", page, result.size());
     log_stage(marker);
     status = result.empty() ? "AniList returned no anime." : "Live AniList data";
     return result;
@@ -1051,8 +1053,10 @@ private:
 
 static void open_anime_details(const SaikouAnime& anime)
 {
-    char marker[96];
-    std::snprintf(marker, sizeof(marker), "ANIME CARD OPENED: id=%d", anime.id);
+    char marker[128];
+    const auto stack = brls::Application::getActivitiesStack();
+    std::snprintf(marker, sizeof(marker),
+        "ANIME CARD OPENED: id=%d stack_before=%zu", anime.id, stack.size());
     log_stage(marker);
     brls::Application::pushActivity(
         new AnimeDetailsActivity(anime),
@@ -1228,26 +1232,26 @@ public:
         heading->setFontSize(28.0f);
         root->addView(heading);
 
-        brls::Box* searchButton = new brls::Box(brls::Axis::ROW);
-        searchButton->setWidth(500.0f);
-        searchButton->setHeight(52.0f);
-        searchButton->setMargins(0, 15, 0, 0);
-        searchButton->setPadding(12.0f);
-        searchButton->setBackgroundColor(nvgRGB(27, 34, 48));
-        searchButton->setBorderColor(nvgRGB(48, 57, 74));
-        searchButton->setBorderThickness(1.0f);
-        searchButton->setCornerRadius(8.0f);
-        searchButton->setFocusable(true);
+        m_searchButton = new brls::Box(brls::Axis::ROW);
+        m_searchButton->setWidth(500.0f);
+        m_searchButton->setHeight(52.0f);
+        m_searchButton->setMargins(0, 15, 0, 0);
+        m_searchButton->setPadding(12.0f);
+        m_searchButton->setBackgroundColor(nvgRGB(27, 34, 48));
+        m_searchButton->setBorderColor(nvgRGB(48, 57, 74));
+        m_searchButton->setBorderThickness(1.0f);
+        m_searchButton->setCornerRadius(8.0f);
+        m_searchButton->setFocusable(true);
 
         m_queryLabel = new brls::Label();
         m_queryLabel->setText("Press A to enter a title with the Switch keyboard");
         m_queryLabel->setFontSize(16.0f);
-        searchButton->addView(m_queryLabel);
-        searchButton->registerAction("Enter search query", brls::BUTTON_A, [this](brls::View*) {
+        m_searchButton->addView(m_queryLabel);
+        m_searchButton->registerAction("Enter search query", brls::BUTTON_A, [this](brls::View*) {
             run_search();
             return true;
         });
-        root->addView(searchButton);
+        root->addView(m_searchButton);
 
         m_status = new brls::Label();
         m_status->setText("Search uses live AniList anime data.");
@@ -1256,10 +1260,18 @@ public:
         m_status->setMargins(0, 12, 0, 0);
         root->addView(m_status);
 
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(575.0f);
+        m_scroll->setMargins(0, 12, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
         m_results = new brls::Box(brls::Axis::COLUMN);
-        m_results->setWidthPercentage(100.0f);
-        m_results->setMargins(0, 12, 0, 0);
-        root->addView(m_results);
+        m_results->setWidth(1160.0f);
+        m_results->setHeight(600.0f);
+        m_scroll->setContentView(m_results);
+        root->addView(m_scroll);
+
         log_stage("SEARCH VIEW BUILT");
         return root;
     }
@@ -1268,60 +1280,84 @@ public:
     {
         if (!m_resultReady.load(std::memory_order_acquire))
             return;
+
         if (m_worker.joinable())
             m_worker.join();
-        render_anime_cards(m_results, m_resultItems);
-        if (m_status)
-            m_status->setText(m_resultStatus + " — press A on a title for details.");
-        m_searching = false;
+
+        m_loading = false;
         m_resultReady.store(false, std::memory_order_release);
+
+        if (m_page == 1)
+            render_results();
+
+        if (m_status)
+        {
+            std::string text = m_resultStatus;
+            text += " — " + std::to_string(m_resultItems.size()) +
+                " results";
+            if (m_hasMore)
+                text += " — select LOAD MORE for another 30.";
+            m_status->setText(text);
+        }
+
         log_stage("SEARCH RESULTS ATTACHED");
     }
 
 private:
     brls::Label* m_queryLabel = nullptr;
+    brls::Box* m_searchButton = nullptr;
     brls::Label* m_status = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
     brls::Box* m_results = nullptr;
+
     std::string m_pendingQuery;
     std::string m_resultStatus;
     std::vector<SaikouAnime> m_resultItems;
     std::thread m_worker;
     std::atomic<bool> m_resultReady{ false };
-    bool m_searching = false;
+
+    bool m_loading = false;
+    bool m_hasMore = true;
+    int m_page = 0;
 
     void run_search()
     {
-        if (m_searching)
+        if (m_loading)
         {
-            if (m_status) m_status->setText("Search is still loading. Please wait.");
+            if (m_status)
+                m_status->setText("Search is still loading. Please wait.");
             return;
         }
 
         log_stage("SEARCH SWITCH KEYBOARD OPEN");
+
         SwkbdConfig keyboard{};
         Result rc = swkbdCreate(&keyboard, 0);
         if (R_FAILED(rc))
         {
-            if (m_status) m_status->setText("Could not open the Switch keyboard.");
+            if (m_status)
+                m_status->setText("Could not open the Switch keyboard.");
             log_stage("SEARCH SWITCH KEYBOARD CREATE FAILED");
             return;
         }
+
         swkbdConfigMakePresetDefault(&keyboard);
         swkbdConfigSetHeaderText(&keyboard, "Search anime on AniList");
         swkbdConfigSetGuideText(&keyboard, "Type an anime title");
         swkbdConfigSetSubText(&keyboard, "Press Search to run the query; Cancel closes the keyboard");
         swkbdConfigSetOkButtonText(&keyboard, "Search");
+
         if (!m_pendingQuery.empty())
             swkbdConfigSetInitialText(&keyboard, m_pendingQuery.c_str());
 
-        // The system keyboard owns input while it is open. Keep Borealis from
-        // treating the same + press as the app-wide quit shortcut on return.
         brls::Application::setGlobalQuit(false);
         g_restoreGlobalQuitAfterKeyboard = true;
         log_stage("SEARCH KEYBOARD GLOBAL QUIT DISABLED");
+
         char query[256] = {};
         rc = swkbdShow(&keyboard, query, sizeof(query));
         swkbdClose(&keyboard);
+
         if (R_FAILED(rc) || query[0] == '\0')
         {
             if (m_status)
@@ -1332,25 +1368,123 @@ private:
 
         if (m_worker.joinable())
             m_worker.join();
+
         m_pendingQuery = query;
-        if (m_queryLabel) m_queryLabel->setText(m_pendingQuery);
-        if (m_status) m_status->setText("Searching AniList...");
+        m_page = 1;
+        m_hasMore = true;
+        m_resultItems.clear();
+
+        if (m_queryLabel)
+            m_queryLabel->setText(m_pendingQuery);
+        if (m_status)
+            m_status->setText("Searching AniList...");
         clear_box(m_results);
-        m_searching = true;
+
+        m_loading = true;
         m_resultReady.store(false, std::memory_order_release);
         log_stage("SEARCH REQUEST STARTED");
-        m_worker = std::thread([this] {
-            m_resultItems = fetch_anilist_media(m_pendingQuery, 12, m_resultStatus);
-            for (SaikouAnime& anime : m_resultItems)
+
+        start_load_page(1);
+    }
+
+    void start_load_page(int page)
+    {
+        if (m_loading && page != 1)
+            return;
+        if (page != 1 && !m_hasMore)
+            return;
+
+        if (m_worker.joinable())
+            m_worker.join();
+
+        m_loading = true;
+        m_resultReady.store(false, std::memory_order_release);
+        m_page = page;
+
+        if (m_status)
+            m_status->setText(page == 1
+                ? "Searching AniList..."
+                : "Loading more search results...");
+
+        m_worker = std::thread([this, page] {
+            std::string status;
+            std::vector<SaikouAnime> newItems =
+                fetch_anilist_media(m_pendingQuery, 30, status, page);
+
+            for (SaikouAnime& anime : newItems)
             {
                 anime.posterPath = cached_cover_path(anime.id);
                 if (!download_image(anime.coverUrl, anime.posterPath))
                     anime.posterPath.clear();
             }
+
+            if (newItems.size() < 30)
+                m_hasMore = false;
+
+            m_resultItems.insert(m_resultItems.end(), newItems.begin(), newItems.end());
+
             m_resultReady.store(true, std::memory_order_release);
         });
     }
+
+    brls::Box* make_search_load_more_card()
+    {
+        return make_home_load_more_card([this] {
+            remove_load_more_row();
+            start_load_page(m_page + 1);
+        });
+    }
+
+    void remove_load_more_row()
+    {
+        if (!m_results || m_results->getChildren().empty())
+            return;
+
+        brls::View* last = m_results->getChildren().back();
+        if (dynamic_cast<brls::Box*>(last))
+            m_results->removeView(last);
+    }
+
+    void render_results()
+    {
+        clear_box(m_results);
+
+        constexpr size_t perRow = 6;
+        constexpr float rowWidth = 1160.0f;
+        constexpr float rowHeight = 252.0f;
+
+        size_t index = 0;
+        while (index < m_resultItems.size())
+        {
+            brls::Box* row = new brls::Box(brls::Axis::ROW);
+            row->setWidth(rowWidth);
+            row->setHeight(rowHeight);
+            row->setAlignItems(brls::AlignItems::FLEX_START);
+
+            const size_t stop = std::min(m_resultItems.size(), index + perRow);
+            for (; index < stop; ++index)
+                row->addView(make_anime_card(m_resultItems[index]));
+
+            m_results->addView(row);
+        }
+
+        if (m_hasMore)
+        {
+            brls::Box* moreRow = new brls::Box(brls::Axis::ROW);
+            moreRow->setWidth(rowWidth);
+            moreRow->setHeight(rowHeight);
+            moreRow->setAlignItems(brls::AlignItems::FLEX_START);
+            moreRow->addView(make_search_load_more_card());
+            m_results->addView(moreRow);
+        }
+
+        const size_t rows = (m_resultItems.size() + perRow - 1) / perRow +
+            (m_hasMore ? 1 : 0);
+        m_results->setHeight(
+            std::max(600.0f, static_cast<float>(rows) * rowHeight + 20.0f));
+    }
 };
+
 
 class PairingActivity;
 static PairingActivity* g_pairingActivity = nullptr;
