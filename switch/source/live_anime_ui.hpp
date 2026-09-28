@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -1933,6 +1934,174 @@ static void fetch_continue_watching(const std::string& token, SaikouAnime& anime
         : ("@" + username + " is linked. No Watching entries yet.");
 }
 
+struct ContinueWatchItem
+{
+    SaikouAnime anime;
+    int progress = 0;
+};
+
+static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
+    const std::string& token, std::string& message)
+{
+    std::vector<ContinueWatchItem> items;
+    if (token.empty())
+        return items;
+
+    std::string username;
+    std::string libraryStatus;
+    const std::vector<AniListEntry> library =
+        fetch_anilist_library(token, username, libraryStatus);
+
+    for (const AniListEntry& entry : library)
+    {
+        if (entry.listStatus != "CURRENT")
+            continue;
+
+        ContinueWatchItem item;
+        item.anime = entry.anime;
+        item.progress = entry.progress;
+        item.anime.posterPath = cached_cover_path(item.anime.id);
+        items.push_back(item);
+
+        if (items.size() >= 24)
+            break;
+    }
+
+    message = items.empty()
+        ? ("@" + username + " is linked. No Watching entries yet.")
+        : ("Watching on AniList  |  @" + username);
+    return items;
+}
+
+static std::vector<ContinueWatchItem> load_local_continue_watching()
+{
+    std::vector<ContinueWatchItem> items;
+    FILE* file = std::fopen("sdmc:/switch/SaikouTV/continue.ini", "r");
+    if (!file)
+        return items;
+
+    std::map<int, ContinueWatchItem> indexed;
+    ContinueWatchItem legacy;
+    bool legacyPresent = false;
+
+    char line[2048] = {};
+    while (std::fgets(line, sizeof(line), file))
+    {
+        std::string value(line);
+        while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
+            value.pop_back();
+
+        const size_t split = value.find('=');
+        if (split == std::string::npos)
+            continue;
+
+        const std::string key = value.substr(0, split);
+        const std::string data = value.substr(split + 1);
+
+        if (key.rfind("item", 0) == 0)
+        {
+            const size_t dot = key.find('.');
+            if (dot != std::string::npos)
+            {
+                const int index = std::atoi(key.substr(4, dot - 4).c_str());
+                if (index >= 0 && index < 24)
+                {
+                    ContinueWatchItem& item = indexed[index];
+                    const std::string field = key.substr(dot + 1);
+                    if (field == "id")
+                        item.anime.id = std::atoi(data.c_str());
+                    else if (field == "title")
+                        item.anime.title = data;
+                    else if (field == "coverUrl")
+                        item.anime.coverUrl = data;
+                    else if (field == "episodes")
+                        item.anime.episodes = std::atoi(data.c_str());
+                    else if (field == "progress")
+                        item.progress = std::atoi(data.c_str());
+                    continue;
+                }
+            }
+        }
+
+        legacyPresent = true;
+        if (key == "id")
+            legacy.anime.id = std::atoi(data.c_str());
+        else if (key == "title")
+            legacy.anime.title = data;
+        else if (key == "coverUrl")
+            legacy.anime.coverUrl = data;
+        else if (key == "episodes")
+            legacy.anime.episodes = std::atoi(data.c_str());
+        else if (key == "progress")
+            legacy.progress = std::atoi(data.c_str());
+    }
+
+    std::fclose(file);
+
+    if (legacyPresent && legacy.anime.id > 0 && !legacy.anime.title.empty())
+    {
+        legacy.anime.posterPath = cached_cover_path(legacy.anime.id);
+        items.push_back(legacy);
+    }
+
+    for (const auto& pair : indexed)
+    {
+        if (pair.second.anime.id <= 0 || pair.second.anime.title.empty())
+            continue;
+        ContinueWatchItem item = pair.second;
+        item.anime.posterPath = cached_cover_path(item.anime.id);
+        items.push_back(item);
+        if (items.size() >= 24)
+            break;
+    }
+
+    return items;
+}
+
+static bool save_local_continue_watching(const ContinueWatchItem& item)
+{
+    if (item.anime.id <= 0 || item.anime.title.empty())
+        return false;
+
+    std::vector<ContinueWatchItem> items = load_local_continue_watching();
+    bool replaced = false;
+
+    for (ContinueWatchItem& existing : items)
+    {
+        if (existing.anime.id != item.anime.id)
+            continue;
+        existing = item;
+        replaced = true;
+        break;
+    }
+
+    if (!replaced)
+        items.insert(items.begin(), item);
+
+    if (items.size() > 24)
+        items.resize(24);
+
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/SaikouTV", 0777);
+
+    FILE* file = std::fopen("sdmc:/switch/SaikouTV/continue.ini", "w");
+    if (!file)
+        return false;
+
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        const ContinueWatchItem& current = items[i];
+        std::fprintf(file, "item%zu.id=%d\n", i, current.anime.id);
+        std::fprintf(file, "item%zu.title=%s\n", i, current.anime.title.c_str());
+        std::fprintf(file, "item%zu.coverUrl=%s\n", i, current.anime.coverUrl.c_str());
+        std::fprintf(file, "item%zu.episodes=%d\n", i, current.anime.episodes);
+        std::fprintf(file, "item%zu.progress=%d\n", i, current.progress);
+    }
+
+    std::fclose(file);
+    return true;
+}
+
 class HomeActivity : public brls::Activity
 {
 public:
@@ -1940,6 +2109,8 @@ public:
     {
         if (m_loader.joinable())
             m_loader.join();
+        if (m_continueLoader.joinable())
+            m_continueLoader.join();
         if (m_airingLoader.joinable())
             m_airingLoader.join();
         if (m_accountLoader.joinable())
@@ -1964,22 +2135,10 @@ public:
     {
         m_status = dynamic_cast<brls::Label*>(getView("home/status"));
         m_cards = dynamic_cast<brls::Box*>(getView("home/trending/cards"));
+        m_continueCards = dynamic_cast<brls::Box*>(getView("home/continue/cards"));
         m_latestCards = dynamic_cast<brls::Box*>(getView("home/latest/cards"));
-        m_continueBox = dynamic_cast<brls::Box*>(getView("home/card/continue"));
-        m_continueTitle = dynamic_cast<brls::Label*>(getView("home/continue/title"));
-        m_continueSubtitle = dynamic_cast<brls::Label*>(getView("home/continue/subtitle"));
-        m_accountRevision = g_anilistAccountRevision.load(std::memory_order_acquire);
-
-        if (m_continueBox)
-            m_continueBox->registerAction("Resume watching", brls::BUTTON_A, [this](brls::View*) {
-                log_stage("CONTINUE WATCHING ACTION");
-                if (m_hasContinue)
-                    open_anime_details(m_continueAnime);
-                else
-                    brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::NONE);
-                log_stage("CONTINUE ACTION PUSH RETURNED");
-                return true;
-            });
+        m_continueMessageLabel = dynamic_cast<brls::Label*>(getView("home/continue/message"));
+        m_continueAccountRevision = g_anilistAccountRevision.load(std::memory_order_acquire);
 
         connect_navigation("nav/search", "Open Search", [] {
             brls::Application::pushActivity(new SearchActivity(), brls::TransitionAnimation::NONE);
@@ -1991,7 +2150,10 @@ public:
             brls::Application::pushActivity(new SettingsActivity(), brls::TransitionAnimation::NONE);
         });
         connect_navigation("nav/home", "Home", [] {});
-        if (m_status) m_status->setText("Loading live AniList trending titles...");
+
+        if (m_status)
+            m_status->setText("Loading live AniList trending titles...");
+
         if (!m_loader.joinable())
         {
             m_loader = std::thread([this] {
@@ -2002,11 +2164,34 @@ public:
                     if (!download_image(anime.coverUrl, anime.posterPath))
                         anime.posterPath.clear();
                 }
-                fetch_continue_watching(load_anilist_token(), m_continueAnime,
-                    m_continueProgress, m_hasContinue, m_continueMessage);
                 m_ready.store(true, std::memory_order_release);
             });
         }
+
+        if (m_continueCards && !m_continueLoader.joinable())
+        {
+            m_continueLoader = std::thread([this] {
+                const std::string token = load_anilist_token();
+                if (!token.empty())
+                {
+                    m_continueItems = fetch_anilist_continue_watching(token, m_continueMessage);
+                    for (ContinueWatchItem& item : m_continueItems)
+                    {
+                        if (!download_image(item.anime.coverUrl, item.anime.posterPath))
+                            item.anime.posterPath.clear();
+                    }
+                }
+                else
+                {
+                    m_continueItems = load_local_continue_watching();
+                    m_continueMessage = m_continueItems.empty()
+                        ? "Watch something and it will appear here."
+                        : "Local watch progress on this Switch.";
+                }
+                m_continueReady.store(true, std::memory_order_release);
+            });
+        }
+
         if (m_latestCards && !m_airingLoader.joinable())
         {
             m_airingLoader = std::thread([this] {
@@ -2028,12 +2213,31 @@ public:
         {
             if (m_loader.joinable())
                 m_loader.join();
+
             render_horizontal_anime_cards(m_cards, m_items);
+            m_attached = true;
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
-
-            m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
+        }
+
+        if (m_continueReady.load(std::memory_order_acquire))
+        {
+            if (m_continueLoader.joinable())
+                m_continueLoader.join();
+
+            if (!m_continueItems.empty())
+            {
+                render_horizontal_anime_cards(m_continueCards, continue_anime_list());
+                if (m_continueMessageLabel)
+                    m_continueMessageLabel->setText(m_continueMessage);
+            }
+            else if (m_continueMessageLabel)
+            {
+                m_continueMessageLabel->setText(m_continueMessage);
+            }
+
+            m_continueReady.store(false, std::memory_order_release);
         }
 
         if (m_airingReady.load(std::memory_order_acquire))
@@ -2050,73 +2254,71 @@ public:
                 m_accountLoader.join();
             m_accountLoading = false;
             m_accountReady.store(false, std::memory_order_release);
-            update_continue_card();
         }
 
         const unsigned int revision = g_anilistAccountRevision.load(std::memory_order_acquire);
-        if (m_attached && revision != m_accountRevision && !m_accountLoading)
+        if (m_attached && revision != m_continueAccountRevision && !m_accountLoading)
         {
-            m_accountRevision = revision;
+            m_continueAccountRevision = revision;
             m_accountLoading = true;
             m_accountReady.store(false, std::memory_order_release);
             m_accountLoader = std::thread([this] {
-                fetch_continue_watching(load_anilist_token(), m_continueAnime,
-                    m_continueProgress, m_hasContinue, m_continueMessage);
+                m_continueItems.clear();
+                const std::string token = load_anilist_token();
+                if (!token.empty())
+                {
+                    m_continueItems = fetch_anilist_continue_watching(token, m_continueMessage);
+                    for (ContinueWatchItem& item : m_continueItems)
+                    {
+                        if (!download_image(item.anime.coverUrl, item.anime.posterPath))
+                            item.anime.posterPath.clear();
+                    }
+                }
+                else
+                {
+                    m_continueItems = load_local_continue_watching();
+                    m_continueMessage = m_continueItems.empty()
+                        ? "Watch something and it will appear here."
+                        : "Local watch progress on this Switch.";
+                }
+                m_continueReady.store(true, std::memory_order_release);
                 m_accountReady.store(true, std::memory_order_release);
             });
         }
     }
 
 private:
+    std::vector<SaikouAnime> continue_anime_list() const
+    {
+        std::vector<SaikouAnime> result;
+        result.reserve(m_continueItems.size());
+        for (const ContinueWatchItem& item : m_continueItems)
+            result.push_back(item.anime);
+        return result;
+    }
+
     std::thread m_loader;
+    std::thread m_continueLoader;
     std::thread m_airingLoader;
     std::thread m_accountLoader;
     std::atomic<bool> m_ready{ false };
+    std::atomic<bool> m_continueReady{ false };
     std::atomic<bool> m_airingReady{ false };
     std::atomic<bool> m_accountReady{ false };
     bool m_attached = false;
     bool m_accountLoading = false;
-    bool m_hasContinue = false;
-    int m_continueProgress = 0;
-    unsigned int m_accountRevision = 0;
+    std::vector<ContinueWatchItem> m_continueItems;
+    unsigned int m_continueAccountRevision = 0;
     std::vector<SaikouAnime> m_items;
     std::vector<SaikouAnime> m_airingItems;
-    SaikouAnime m_continueAnime;
     std::string m_loadStatus;
     std::string m_airingStatus;
     std::string m_continueMessage;
     brls::Label* m_status = nullptr;
     brls::Box* m_cards = nullptr;
+    brls::Box* m_continueCards = nullptr;
     brls::Box* m_latestCards = nullptr;
-    brls::Box* m_continueBox = nullptr;
-    brls::Label* m_continueTitle = nullptr;
-    brls::Label* m_continueSubtitle = nullptr;
-
-    void update_continue_card()
-    {
-        if (m_continueTitle)
-            m_continueTitle->setText(m_hasContinue ? m_continueAnime.title : "Nothing to resume yet");
-        if (m_continueSubtitle)
-            m_continueSubtitle->setText(m_continueMessage);
-    }
-
-    void connect_navigation(const char* id, const char* name, std::function<void()> callback)
-    {
-        brls::View* view = getView(id);
-        if (!view) return;
-        view->registerAction(name, brls::BUTTON_A, [callback, name](brls::View*) {
-            char marker[128];
-            std::snprintf(marker, sizeof(marker), "NAV ACTION: %s", name);
-            log_stage(marker);
-            callback();
-            char completeMarker[128];
-            const auto stack = brls::Application::getActivitiesStack();
-            std::snprintf(completeMarker, sizeof(completeMarker),
-                "NAV ACTION COMPLETE: %s stack=%zu", name, stack.size());
-            log_stage(completeMarker);
-            return true;
-        });
-    }
+    brls::Label* m_continueMessageLabel = nullptr;
 };
 
 static void tick_live_ui_activities()
