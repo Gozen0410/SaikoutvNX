@@ -2907,14 +2907,28 @@ public:
         account->setFocusable(false);
         root->addView(account);
 
-        brls::Label* pair = new brls::Label();
-        pair->setText(load_anilist_token().empty()
+        brls::Box* pair =
+            new brls::Box(brls::Axis::ROW);
+        pair->setWidthPercentage(100.0f);
+        pair->setHeight(56.0f);
+        pair->setMargins(0, 14, 0, 18);
+        pair->setPadding(10.0f);
+        pair->setAlignItems(brls::AlignItems::CENTER);
+        pair->setBackgroundColor(nvgRGB(27, 34, 48));
+        pair->setBorderColor(nvgRGB(48, 57, 74));
+        pair->setBorderThickness(1.0f);
+        pair->setCornerRadius(6.0f);
+        pair->setFocusable(true);
+
+        brls::Label* pairLabel = new brls::Label();
+        pairLabel->setText(load_anilist_token().empty()
             ? "LINK ANILIST FROM PHONE"
             : "PAIR AGAIN / CHANGE ANILIST ACCOUNT");
-        pair->setFontSize(17.0f);
-        pair->setTextColor(nvgRGB(97, 207, 226));
-        pair->setMargins(0, 14, 0, 14);
-        pair->setFocusable(true);
+        pairLabel->setFontSize(17.0f);
+        pairLabel->setTextColor(nvgRGB(97, 207, 226));
+        pairLabel->setFocusable(false);
+        pair->addView(pairLabel);
+
         pair->registerAction(
             "Link AniList account",
             brls::BUTTON_A,
@@ -2930,7 +2944,7 @@ public:
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 24, 0, 6);
+        sourceHeading->setMargins(0, 20, 0, 6);
         sourceHeading->setTextColor(nvgRGB(220, 228, 240));
         sourceHeading->setFocusable(false);
         root->addView(sourceHeading);
