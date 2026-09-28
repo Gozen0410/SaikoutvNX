@@ -2010,7 +2010,7 @@ public:
         if (m_latestCards && !m_airingLoader.joinable())
         {
             m_airingLoader = std::thread([this] {
-                m_airingItems = fetch_currently_airing_media(6, m_airingStatus);
+                m_airingItems = fetch_currently_airing_media(24, m_airingStatus);
                 for (SaikouAnime& anime : m_airingItems)
                 {
                     anime.posterPath = cached_cover_path(anime.id);
