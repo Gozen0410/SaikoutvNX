@@ -3251,8 +3251,13 @@ public:
 
     ~ContinueCatalogActivity() override
     {
+        m_coverLifetime->store(false, std::memory_order_release);
+
         if (m_worker.joinable())
             m_worker.join();
+        if (m_coverWorker.joinable())
+            m_coverWorker.join();
+
         if (g_continueCatalogActivity == this)
             g_continueCatalogActivity = nullptr;
     }
@@ -3300,27 +3305,46 @@ public:
 
     void tick()
     {
-        if (!m_ready.load(std::memory_order_acquire))
-            return;
+        if (m_ready.load(std::memory_order_acquire))
+        {
+            if (m_worker.joinable())
+                m_worker.join();
 
-        if (m_worker.joinable())
-            m_worker.join();
+            render_first_batch();
+            m_ready.store(false, std::memory_order_release);
+            m_loading = false;
+        }
 
-        render_first_batch();
-        m_ready.store(false, std::memory_order_release);
-        m_loading = false;
+        start_pending_cover_worker();
     }
 
 private:
+    struct CoverJob
+    {
+        brls::Image* image = nullptr;
+        std::string url;
+        std::string path;
+    };
+
     brls::Label* m_status = nullptr;
     brls::ScrollingFrame* m_scroll = nullptr;
     brls::Box* m_grid = nullptr;
+
     std::vector<ContinueWatchItem> m_allItems;
     std::thread m_worker;
+    std::thread m_coverWorker;
     std::atomic<bool> m_ready{ false };
+    std::shared_ptr<std::atomic<bool>> m_coverLifetime =
+        std::make_shared<std::atomic<bool>>(true);
+
+    std::vector<CoverJob> m_pendingCoverJobs;
+    size_t m_renderedCount = 0;
+    size_t m_coverCompleted = 0;
+    size_t m_coverTotal = 0;
+    bool m_coverWorkerDone = true;
+
     bool m_loading = false;
     bool m_hasMore = false;
-    size_t m_renderedCount = 0;
 
     void start_load()
     {
@@ -3332,24 +3356,33 @@ private:
 
         m_worker = std::thread([this] {
             const std::string token = load_anilist_token();
+
             if (!token.empty())
             {
-                m_allItems = fetch_anilist_continue_watching(token, m_statusText, 0);
+                m_allItems =
+                    fetch_anilist_continue_watching(token, m_statusText, 0);
+
                 for (ContinueWatchItem& item : m_allItems)
-                {
                     item.anime.posterPath = cached_cover_path(item.anime.id);
-                    if (!download_image(item.anime.coverUrl, item.anime.posterPath))
-                        item.anime.posterPath.clear();
-                }
+
+                if (m_statusText.empty())
+                    m_statusText = m_allItems.empty()
+                        ? "No anime currently in your AniList watching history."
+                        : "Live AniList watch history";
             }
             else
             {
                 m_allItems = load_local_continue_watching(0);
+
+                for (ContinueWatchItem& item : m_allItems)
+                    item.anime.posterPath = cached_cover_path(item.anime.id);
+
                 m_statusText = m_allItems.empty()
                     ? "Watch something and it will appear here."
                     : "Local watch progress on this Switch.";
             }
 
+            m_hasMore = m_allItems.size() > 30;
             m_ready.store(true, std::memory_order_release);
         });
     }
@@ -3358,43 +3391,97 @@ private:
     {
         clear_box(m_grid);
         m_renderedCount = 0;
-
+        m_pendingCoverJobs.clear();
         append_batch();
     }
 
     void append_batch()
     {
-        constexpr size_t batchSize = 30;
-        const size_t start = m_renderedCount;
-        const size_t end = std::min(m_allItems.size(), start + batchSize);
+        if (!m_grid)
+            return;
 
-        for (size_t index = start; index < end; ++index)
+        // Remove only the previous Load More row. If it is focused, hand focus
+        // to an existing card before freeing the old row.
+        if (!m_grid->getChildren().empty() && m_renderedCount > 0)
+        {
+            brls::View* last = m_grid->getChildren().back();
+            brls::Box* moreRow = dynamic_cast<brls::Box*>(last);
+
+            if (moreRow && moreRow->getChildren().size() == 1)
+            {
+                brls::View* moreCard = moreRow->getChildren().front();
+                if (brls::Application::getCurrentFocus() == moreCard)
+                {
+                    const auto& rows = m_grid->getChildren();
+                    if (rows.size() >= 2)
+                    {
+                        brls::Box* previousRow =
+                            dynamic_cast<brls::Box*>(rows[rows.size() - 2]);
+                        if (previousRow && !previousRow->getChildren().empty())
+                            brls::Application::giveFocus(
+                                previousRow->getChildren().back());
+                    }
+                }
+
+                m_grid->removeView(moreRow);
+            }
+        }
+
+        constexpr size_t perRow = 6;
+        constexpr size_t batchSize = 30;
+        constexpr float rowWidth = 1160.0f;
+        constexpr float rowHeight = 252.0f;
+
+        const size_t start = m_renderedCount;
+        const size_t end =
+            std::min(m_allItems.size(), start + batchSize);
+
+        size_t index = start;
+        while (index < end)
         {
             brls::Box* row = nullptr;
 
             if (!m_grid->getChildren().empty())
             {
-                row = dynamic_cast<brls::Box*>(m_grid->getChildren().back());
-                if (!row || row->getChildren().size() >= 6)
+                brls::View* last = m_grid->getChildren().back();
+                row = dynamic_cast<brls::Box*>(last);
+                if (row && row->getChildren().size() >= perRow)
                     row = nullptr;
             }
 
             if (!row)
             {
                 row = new brls::Box(brls::Axis::ROW);
-                row->setWidth(1160.0f);
-                row->setHeight(252.0f);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
                 row->setAlignItems(brls::AlignItems::FLEX_START);
                 m_grid->addView(row);
             }
 
-            std::string subtitle = "Episode " +
-                std::to_string(m_allItems[index].progress);
-            if (m_allItems[index].anime.episodes > 0)
-                subtitle += " / " +
-                    std::to_string(m_allItems[index].anime.episodes);
+            while (index < end && row->getChildren().size() < perRow)
+            {
+                ContinueWatchItem& item = m_allItems[index];
 
-            row->addView(make_anime_card(m_allItems[index].anime, subtitle));
+                brls::Image* image = nullptr;
+                std::string subtitle =
+                    "Episode " + std::to_string(item.progress);
+                if (item.anime.episodes > 0)
+                    subtitle += " / " + std::to_string(item.anime.episodes);
+
+                row->addView(
+                    make_anime_card(item.anime, subtitle, &image));
+
+                struct stat st;
+                const std::string path = cached_cover_path(item.anime.id);
+                if (image && !item.anime.coverUrl.empty() &&
+                    (stat(path.c_str(), &st) != 0 || st.st_size <= 256))
+                {
+                    m_pendingCoverJobs.push_back(
+                        { image, item.anime.coverUrl, path });
+                }
+
+                ++index;
+            }
         }
 
         m_renderedCount = end;
@@ -3403,42 +3490,132 @@ private:
         if (m_hasMore)
         {
             brls::Box* moreRow = new brls::Box(brls::Axis::ROW);
-            moreRow->setWidth(1160.0f);
-            moreRow->setHeight(252.0f);
+            moreRow->setWidth(rowWidth);
+            moreRow->setHeight(rowHeight);
             moreRow->setAlignItems(brls::AlignItems::FLEX_START);
 
             moreRow->addView(make_home_load_more_card([this] {
-                remove_load_more_row();
                 append_batch();
             }));
             m_grid->addView(moreRow);
         }
 
-        const size_t dataRows = (m_renderedCount + 5) / 6;
+        const size_t dataRows =
+            (m_renderedCount + perRow - 1) / perRow;
         const size_t totalRows = dataRows + (m_hasMore ? 1 : 0);
         m_grid->setHeight(
-            std::max(600.0f, static_cast<float>(totalRows) * 252.0f + 20.0f));
+            std::max(600.0f, static_cast<float>(totalRows) * rowHeight + 20.0f));
 
         if (m_status)
         {
-            m_status->setText(
-                std::to_string(m_renderedCount) + " of " +
-                std::to_string(m_allItems.size()) + " watch entries");
+            std::string label = m_statusText.empty()
+                ? "Continue Watching"
+                : m_statusText;
+
+            if (!m_pendingCoverJobs.empty())
+            {
+                label += " — Loading posters: 0 / " +
+                    std::to_string(m_pendingCoverJobs.size());
+            }
+            else if (m_hasMore)
+            {
+                label += " — select LOAD MORE for another 30";
+            }
+            else
+            {
+                label += " — " +
+                    std::to_string(m_allItems.size()) +
+                    " watch entries";
+            }
+
+            m_status->setText(label);
         }
     }
 
-    void remove_load_more_row()
+    void start_pending_cover_worker()
     {
-        if (m_grid && !m_grid->getChildren().empty())
+        if (m_pendingCoverJobs.empty())
+            return;
+
+        if (m_coverWorker.joinable())
         {
-            brls::View* last = m_grid->getChildren().back();
-            if (dynamic_cast<brls::Box*>(last))
-                m_grid->removeView(last);
+            if (!m_coverWorkerDone)
+                return;
+
+            m_coverWorker.join();
         }
+
+        std::vector<CoverJob> jobs;
+        jobs.swap(m_pendingCoverJobs);
+
+        m_coverCompleted = 0;
+        m_coverTotal = jobs.size();
+        m_coverWorkerDone = false;
+
+        const auto lifetime = m_coverLifetime;
+        perf_log_count("CONTINUE PROGRESSIVE COVERS START", jobs.size());
+
+        m_coverWorker = std::thread(
+            [this, lifetime, jobs = std::move(jobs)] {
+                size_t completed = 0;
+
+                for (const CoverJob& job : jobs)
+                {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    if (!download_image(job.url, job.path))
+                        continue;
+
+                    ++completed;
+
+                    brls::sync([this, lifetime, image = job.image,
+                        path = job.path, completed, total = jobs.size()] {
+                        if (!lifetime->load(std::memory_order_acquire))
+                            return;
+
+                        image->setImageFromFile(path);
+                        m_coverCompleted = completed;
+
+                        if (m_status)
+                        {
+                            m_status->setText(
+                                "Loading posters: " +
+                                std::to_string(completed) + " / " +
+                                std::to_string(total));
+                        }
+                    });
+                }
+
+                brls::sync([this, lifetime, completed, total = jobs.size()] {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    m_coverCompleted = completed;
+                    m_coverWorkerDone = true;
+
+                    if (m_status)
+                    {
+                        std::string label = m_statusText.empty()
+                            ? "Continue Watching"
+                            : m_statusText;
+                        label += " — " + std::to_string(completed) +
+                            " / " + std::to_string(total) +
+                            " posters loaded.";
+                        if (m_hasMore)
+                            label += " Select LOAD MORE for another 30.";
+                        m_status->setText(label);
+                    }
+
+                    perf_log_count(
+                        "CONTINUE PROGRESSIVE COVERS DONE", completed);
+                });
+            });
     }
 
     std::string m_statusText;
 };
+
 
 class HomeActivity : public brls::Activity
 {
