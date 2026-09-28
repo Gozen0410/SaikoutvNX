@@ -2118,6 +2118,8 @@ public:
             if (m_loader.joinable())
                 m_loader.join();
             render_horizontal_anime_cards(m_cards, m_items);
+            render_continue_cards();
+
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
 
