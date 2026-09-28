@@ -1301,6 +1301,21 @@ public:
         brls::Box* root = new brls::Box(brls::Axis::COLUMN);
         register_page_back_action(root);
         root->setWidthPercentage(100.0f);
+
+        // Pairing is intentionally informational for now, so it has no
+        // visible controls to focus. Give the new Activity a tiny invisible
+        // focus target so input cannot fall through to Settings underneath.
+        brls::Padding* focusSink = new brls::Padding();
+        focusSink->setWidth(1.0f);
+        focusSink->setHeight(1.0f);
+        focusSink->setFocusable(true);
+        focusSink->registerAction(
+            "Pairing no-op",
+            brls::BUTTON_A,
+            [](brls::View*) {
+                return true;
+            });
+        root->addView(focusSink);
         root->setHeightPercentage(100.0f);
         root->setPadding(30.0f);
         root->setBackgroundColor(nvgRGB(16, 20, 29));
