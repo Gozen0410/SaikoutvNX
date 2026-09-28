@@ -3150,12 +3150,16 @@ class HomeActivity : public brls::Activity
 public:
     ~HomeActivity() override
     {
+        m_coverLifetime->store(false, std::memory_order_release);
+
         if (m_loader.joinable())
             m_loader.join();
         if (m_airingLoader.joinable())
             m_airingLoader.join();
         if (m_accountLoader.joinable())
             m_accountLoader.join();
+        if (m_coverLoader.joinable())
+            m_coverLoader.join();
     }
 
     brls::View* createContentView() override
@@ -3202,31 +3206,18 @@ public:
             m_loader = std::thread([this] {
                 perf_log("HOME TRENDING API START");
                 m_items = fetch_anilist_media("", 24, m_loadStatus);
-                perf_log_count("HOME TRENDING METADATA RECEIVED", m_items.size());
-
-                perf_log("HOME TRENDING COVERS START");
                 for (SaikouAnime& anime : m_items)
-                {
                     anime.posterPath = cached_cover_path(anime.id);
-                    if (!download_image(anime.coverUrl, anime.posterPath))
-                        anime.posterPath.clear();
-                }
-                perf_log("HOME TRENDING COVERS DONE");
+                perf_log_count("HOME TRENDING METADATA RECEIVED", m_items.size());
 
                 const std::string token = load_anilist_token();
                 if (!token.empty())
                 {
                     perf_log("HOME CONTINUE API START");
                     m_continueItems = fetch_anilist_continue_watching(token, m_continueMessage);
-                    perf_log_count("HOME CONTINUE METADATA RECEIVED", m_continueItems.size());
-
-                    perf_log("HOME CONTINUE COVERS START");
                     for (ContinueWatchItem& item : m_continueItems)
-                    {
-                        if (!download_image(item.anime.coverUrl, item.anime.posterPath))
-                            item.anime.posterPath.clear();
-                    }
-                    perf_log("HOME CONTINUE COVERS DONE");
+                        item.anime.posterPath = cached_cover_path(item.anime.id);
+                    perf_log_count("HOME CONTINUE METADATA RECEIVED", m_continueItems.size());
                 }
                 else
                 {
@@ -3235,11 +3226,13 @@ public:
                     m_continueMessage = m_continueItems.empty()
                         ? "Watch something and it will appear here."
                         : "Local watch progress on this Switch.";
+                    for (ContinueWatchItem& item : m_continueItems)
+                        item.anime.posterPath = cached_cover_path(item.anime.id);
                     perf_log_count("HOME CONTINUE LOCAL READY", m_continueItems.size());
                 }
 
                 m_ready.store(true, std::memory_order_release);
-                perf_log("HOME PRIMARY DATA READY");
+                perf_log("HOME PRIMARY METADATA READY");
             });
         }
         if (m_latestCards && !m_airingLoader.joinable())
@@ -3247,19 +3240,12 @@ public:
             m_airingLoader = std::thread([this] {
                 perf_log("HOME AIRING API START");
                 m_airingItems = fetch_currently_airing_media(24, m_airingStatus);
+                for (SaikouAnime& anime : m_airingItems)
+                    anime.posterPath = cached_cover_path(anime.id);
                 perf_log_count("HOME AIRING METADATA RECEIVED", m_airingItems.size());
 
-                perf_log("HOME AIRING COVERS START");
-                for (SaikouAnime& anime : m_airingItems)
-                {
-                    anime.posterPath = cached_cover_path(anime.id);
-                    if (!download_image(anime.coverUrl, anime.posterPath))
-                        anime.posterPath.clear();
-                }
-                perf_log("HOME AIRING COVERS DONE");
-
                 m_airingReady.store(true, std::memory_order_release);
-                perf_log("HOME AIRING DATA READY");
+                perf_log("HOME AIRING METADATA READY");
             });
         }
     }
@@ -3298,10 +3284,11 @@ public:
             render_continue_cards();
             perf_log_count("HOME CONTINUE CARDS RENDERED", m_continueItems.size());
             if (m_status)
-                m_status->setText(m_loadStatus + " — select a poster for details.");
+                m_status->setText("Home ready — loading posters...");
 
             m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
+            start_cover_loading();
         }
 
         if (m_airingReady.load(std::memory_order_acquire))
@@ -3315,6 +3302,8 @@ public:
             });
             perf_log_count("HOME AIRING CARDS RENDERED", m_airingItems.size());
             m_airingReady.store(false, std::memory_order_release);
+            if (m_attached)
+                start_cover_loading();
         }
 
         if (m_attached && m_accountReady.load(std::memory_order_acquire))
@@ -3360,6 +3349,7 @@ private:
     std::thread m_loader;
     std::thread m_airingLoader;
     std::thread m_accountLoader;
+    std::thread m_coverLoader;
     std::atomic<bool> m_ready{ false };
     std::atomic<bool> m_airingReady{ false };
     std::atomic<bool> m_accountReady{ false };
@@ -3380,6 +3370,21 @@ private:
     brls::Box* m_continueBox = nullptr;
     brls::Label* m_continueTitle = nullptr;
     brls::Label* m_continueSubtitle = nullptr;
+
+    struct CoverTarget
+    {
+        int animeId = 0;
+        std::string url;
+        std::string path;
+        brls::Image* image = nullptr;
+    };
+
+    std::shared_ptr<std::atomic<bool>> m_coverLifetime =
+        std::make_shared<std::atomic<bool>>(true);
+    std::atomic<uint64_t> m_coverGeneration{ 0 };
+    std::vector<CoverTarget> m_coverTargets;
+    size_t m_coverCompleted = 0;
+    size_t m_coverTotal = 0;
 
     void render_continue_cards()
     {
@@ -3407,7 +3412,7 @@ private:
             std::string subtitle = "Episode " + std::to_string(item.progress);
             if (item.anime.episodes > 0)
                 subtitle += " / " + std::to_string(item.anime.episodes);
-            row->addView(make_anime_card(item.anime, subtitle));
+            row->addView(make_anime_card(item.anime, subtitle, nullptr));
         }
 
         row->setDefaultFocusedIndex(0);
@@ -3435,9 +3440,178 @@ private:
             m_continueSubtitle->setText(m_continueMessage);
     }
 
+    void collect_cover_targets(
+        brls::Box* container,
+        size_t expectedCount,
+        std::vector<CoverTarget>& targets)
+    {
+        if (!container)
+            return;
+
+        for (brls::View* rowView : container->getChildren())
+        {
+            brls::Box* row = dynamic_cast<brls::Box*>(rowView);
+            if (!row)
+                continue;
+
+            for (brls::View* cardView : row->getChildren())
+            {
+                if (targets.size() >= expectedCount)
+                    return;
+
+                brls::Box* card = dynamic_cast<brls::Box*>(cardView);
+                if (!card)
+                    continue;
+
+                const auto children = card->getChildren();
+                if (children.empty())
+                    continue;
+
+                brls::Image* image =
+                    dynamic_cast<brls::Image*>(children.front());
+                if (!image)
+                    continue;
+
+                targets.push_back(CoverTarget());
+                targets.back().image = image;
+            }
+        }
+    }
+
+    void start_cover_loading()
+    {
+        if (m_coverLoader.joinable())
+            m_coverLoader.join();
+
+        m_coverTargets.clear();
+        m_coverCompleted = 0;
+
+        for (const SaikouAnime& anime : m_items)
+            m_coverTargets.push_back({ anime.id, anime.coverUrl,
+                cached_cover_path(anime.id), nullptr });
+
+        for (const ContinueWatchItem& item : m_continueItems)
+            m_coverTargets.push_back({ item.anime.id, item.anime.coverUrl,
+                cached_cover_path(item.anime.id), nullptr });
+
+        for (const SaikouAnime& anime : m_airingItems)
+            m_coverTargets.push_back({ anime.id, anime.coverUrl,
+                cached_cover_path(anime.id), nullptr });
+
+        size_t offset = 0;
+        if (m_cards)
+        {
+            std::vector<CoverTarget> targets;
+            collect_cover_targets(m_cards, m_items.size(), targets);
+            for (size_t i = 0; i < targets.size() && offset + i < m_coverTargets.size(); ++i)
+                m_coverTargets[offset + i].image = targets[i].image;
+            offset += targets.size();
+        }
+
+        if (m_continueBox)
+        {
+            std::vector<CoverTarget> targets;
+            collect_cover_targets(m_continueBox, m_continueItems.size(), targets);
+            for (size_t i = 0; i < targets.size() && offset + i < m_coverTargets.size(); ++i)
+                m_coverTargets[offset + i].image = targets[i].image;
+            offset += targets.size();
+        }
+
+        if (m_latestCards)
+        {
+            std::vector<CoverTarget> targets;
+            collect_cover_targets(m_latestCards, m_airingItems.size(), targets);
+            for (size_t i = 0; i < targets.size() && offset + i < m_coverTargets.size(); ++i)
+                m_coverTargets[offset + i].image = targets[i].image;
+        }
+
+        std::vector<CoverTarget> jobs;
+        for (const CoverTarget& target : m_coverTargets)
+        {
+            if (!target.image || target.url.empty())
+                continue;
+
+            struct stat st;
+            if (stat(target.path.c_str(), &st) == 0 && st.st_size > 256)
+                continue;
+
+            jobs.push_back(target);
+        }
+
+        m_coverTotal = jobs.size();
+        if (m_coverTotal == 0)
+        {
+            if (m_status)
+                m_status->setText("Home ready — select a poster for details.");
+            return;
+        }
+
+        const uint64_t generation =
+            m_coverGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+        const auto lifetime = m_coverLifetime;
+        perf_log_count("HOME PROGRESSIVE COVERS START", jobs.size());
+
+        m_coverLoader = std::thread(
+            [this, lifetime, generation, jobs] {
+                size_t completed = 0;
+
+                for (const CoverTarget& job : jobs)
+                {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+                    if (m_coverGeneration.load(std::memory_order_acquire) != generation)
+                        return;
+
+                    if (!download_image(job.url, job.path))
+                        continue;
+
+                    ++completed;
+                    brls::sync([this, lifetime, generation,
+                        image = job.image, path = job.path, completed] {
+                        if (!lifetime->load(std::memory_order_acquire))
+                            return;
+                        if (m_coverGeneration.load(std::memory_order_acquire) != generation)
+                            return;
+
+                        image->setImageFromFile(path);
+                        m_coverCompleted = completed;
+
+                        if (m_status)
+                        {
+                            m_status->setText(
+                                "Loading posters: " +
+                                std::to_string(m_coverCompleted) + " / " +
+                                std::to_string(m_coverTotal));
+                        }
+
+                        char marker[160];
+                        std::snprintf(marker, sizeof(marker),
+                            "HOME PROGRESSIVE COVER READY %zu/%zu",
+                            completed, jobs.size());
+                        perf_log(marker);
+                    });
+                }
+
+                brls::sync([this, lifetime, generation, completed] {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+                    if (m_coverGeneration.load(std::memory_order_acquire) != generation)
+                        return;
+
+                    m_coverCompleted = completed;
+                    if (m_status)
+                        m_status->setText("Home ready — select a poster for details.");
+
+                    perf_log_count("HOME PROGRESSIVE COVERS DONE", completed);
+                });
+            });
+    }
+
     void update_continue_card()
     {
         render_continue_cards();
+        if (m_attached)
+            start_cover_loading();
     }
 
     void connect_navigation(const char* id, const char* name, std::function<void()> callback)
