@@ -1916,8 +1916,13 @@ public:
 
     ~LibraryActivity() override
     {
+        m_coverLifetime->store(false, std::memory_order_release);
+
         if (m_worker.joinable())
             m_worker.join();
+        if (m_coverWorker.joinable())
+            m_coverWorker.join();
+
         if (g_libraryActivity == this)
             g_libraryActivity = nullptr;
     }
@@ -1952,7 +1957,8 @@ public:
         m_pairButton->setMargins(0, 8, 0, 0);
         m_pairButton->setFocusable(true);
         m_pairButton->registerAction("Pair AniList account", brls::BUTTON_A, [](brls::View*) {
-            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::NONE);
+            brls::Application::pushActivity(
+                new PairingActivity(), brls::TransitionAnimation::NONE);
             return true;
         });
         m_content->addView(m_pairButton);
@@ -1960,75 +1966,51 @@ public:
         brls::Box* categories = new brls::Box(brls::Axis::ROW);
         categories->setHeight(40.0f);
         categories->setMargins(0, 18, 0, 0);
-        static const char* names[] = { "WATCHING", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REWATCHING" };
+
+        static const char* names[] = {
+            "WATCHING", "PLANNING", "COMPLETED",
+            "PAUSED", "DROPPED", "REWATCHING"
+        };
+
         for (size_t i = 0; i < 6; ++i)
         {
             brls::Label* tab = new brls::Label();
             tab->setText(names[i]);
             tab->setFontSize(13.0f);
             tab->setMargins(0, 10, 0, 0);
-            tab->setBackgroundColor(i == m_category ? nvgRGB(36, 70, 86) : nvgRGB(27, 34, 48));
+            tab->setBackgroundColor(
+                i == m_category
+                    ? nvgRGB(36, 70, 86)
+                    : nvgRGB(27, 34, 48));
             tab->setFocusable(true);
-            tab->registerAction("Show AniList category", brls::BUTTON_A, [this, i](brls::View*) {
-                log_stage("LIBRARY CATEGORY SELECTED");
-                if (!m_loading && m_loaded && m_category != i)
-                {
-                    m_category = i;
-                    m_page = 0;
-                    update_category_styles();
-                    start_page_load();
-                }
-                return true;
-            });
+
+            tab->registerAction(
+                "Show AniList category",
+                brls::BUTTON_A,
+                [this, i](brls::View*) {
+                    log_stage("LIBRARY CATEGORY SELECTED");
+
+                    if (!m_loading && m_loaded && m_category != i)
+                    {
+                        m_category = i;
+                        m_renderedCount = 0;
+                        update_category_styles();
+                        reset_category_view();
+                    }
+                    return true;
+                });
+
             m_categories[i] = tab;
             categories->addView(tab);
         }
+
         m_content->addView(categories);
-
-        brls::Box* pageControls = new brls::Box(brls::Axis::ROW);
-        pageControls->setHeight(38.0f);
-        pageControls->setMargins(0, 8, 0, 0);
-
-        m_previous = new brls::Label();
-        m_previous->setText("PREVIOUS");
-        m_previous->setFontSize(13.0f);
-        m_previous->setFocusable(true);
-        m_previous->registerAction("Previous library page", brls::BUTTON_A, [this](brls::View*) {
-            if (!m_loading && m_loaded && m_page > 0)
-            {
-                --m_page;
-                start_page_load();
-            }
-            return true;
-        });
-        pageControls->addView(m_previous);
-
-        m_pageInfo = new brls::Label();
-        m_pageInfo->setFontSize(13.0f);
-        m_pageInfo->setTextColor(nvgRGB(174, 184, 200));
-        m_pageInfo->setMargins(0, 28, 0, 0);
-        pageControls->addView(m_pageInfo);
-
-        m_next = new brls::Label();
-        m_next->setText("NEXT");
-        m_next->setFontSize(13.0f);
-        m_next->setMargins(0, 28, 0, 0);
-        m_next->setFocusable(true);
-        m_next->registerAction("Next library page", brls::BUTTON_A, [this](brls::View*) {
-            if (!m_loading && m_loaded && m_page + 1 < page_count())
-            {
-                ++m_page;
-                start_page_load();
-            }
-            return true;
-        });
-        pageControls->addView(m_next);
-        m_content->addView(pageControls);
 
         m_cards = new brls::Box(brls::Axis::COLUMN);
         m_cards->setWidthPercentage(100.0f);
         m_cards->setMargins(0, 8, 0, 0);
         m_content->addView(m_cards);
+
         log_stage("LIBRARY VIEW BUILT");
         return m_content;
     }
@@ -2036,25 +2018,30 @@ public:
     void onContentAvailable() override
     {
         log_stage("ACTIVITY OPEN: Library");
+
         m_token = load_anilist_token();
         if (m_token.empty())
         {
             log_stage("LIBRARY HAS NO SAVED ANILIST TOKEN");
             m_loading = false;
             m_loaded = true;
-            m_loadStatus = "No AniList account is linked. Pair with the Saikou phone app above.";
+            m_loadStatus =
+                "No AniList account is linked. Pair with the Saikou phone app above.";
+
             if (m_statusLabel)
                 m_statusLabel->setText(m_loadStatus);
+
             log_stage("LIBRARY CONTENT READY WITHOUT ACCOUNT");
             return;
         }
 
         m_loading = true;
         log_stage("LIBRARY REQUEST STARTED");
+
         m_worker = std::thread([this] {
-            m_entries = fetch_anilist_library(m_token, m_username, m_loadStatus);
-            m_pageItems = collect_page_items();
-            download_page_images(m_pageItems);
+            m_entries =
+                fetch_anilist_library(m_token, m_username, m_loadStatus);
+
             m_ready.store(true, std::memory_order_release);
         });
     }
@@ -2063,139 +2050,357 @@ public:
     {
         if (!m_ready.load(std::memory_order_acquire))
             return;
+
         if (m_worker.joinable())
             m_worker.join();
+
         m_loading = false;
         m_loaded = true;
         update_category_styles();
-        render_page();
+
+        m_renderedCount = 0;
+        clear_box(m_cards);
+        append_next_batch();
+
         log_stage("LIBRARY PAGE ATTACHED");
         m_ready.store(false, std::memory_order_release);
+
+        start_cover_worker();
     }
 
 private:
-    static constexpr size_t kPageSize = 6;
+    static constexpr size_t kBatchSize = 24;
     static const char* const kStatuses[6];
+
+    struct CoverJob
+    {
+        brls::Image* image = nullptr;
+        std::string url;
+        std::string path;
+    };
 
     brls::Box* m_content = nullptr;
     brls::Label* m_statusLabel = nullptr;
     brls::Label* m_pairButton = nullptr;
     brls::Label* m_categories[6]{};
-    brls::Label* m_previous = nullptr;
-    brls::Label* m_next = nullptr;
-    brls::Label* m_pageInfo = nullptr;
     brls::Box* m_cards = nullptr;
+
     std::string m_token;
     std::string m_username;
     std::string m_loadStatus;
+
     std::vector<AniListEntry> m_entries;
-    std::vector<AniListEntry> m_pageItems;
+    std::vector<AniListEntry> m_matchingEntries;
+
     std::thread m_worker;
+    std::thread m_coverWorker;
+
     std::atomic<bool> m_ready{ false };
+    std::shared_ptr<std::atomic<bool>> m_coverLifetime =
+        std::make_shared<std::atomic<bool>>(true);
+
+    std::vector<CoverJob> m_pendingCoverJobs;
+    bool m_coverWorkerDone = true;
+    size_t m_renderedCount = 0;
+
     bool m_loading = false;
     bool m_loaded = false;
     size_t m_category = 0;
-    size_t m_page = 0;
 
-    std::vector<AniListEntry> collect_page_items() const
+    std::vector<AniListEntry> collect_category_items() const
     {
         std::vector<AniListEntry> matching;
+
+        if (m_category >= 6)
+            return matching;
+
         for (const AniListEntry& entry : m_entries)
+        {
             if (entry.listStatus == kStatuses[m_category])
                 matching.push_back(entry);
-        const size_t start = m_page * kPageSize;
-        std::vector<AniListEntry> page;
-        for (size_t i = start; i < matching.size() && i < start + kPageSize; ++i)
-            page.push_back(matching[i]);
-        return page;
-    }
-
-    void download_page_images(std::vector<AniListEntry>& page)
-    {
-        for (AniListEntry& entry : page)
-        {
-            entry.anime.posterPath = cached_cover_path(entry.anime.id);
-            if (!download_image(entry.anime.coverUrl, entry.anime.posterPath))
-                entry.anime.posterPath.clear();
         }
+
+        return matching;
     }
 
-    size_t page_count() const
+    void reset_category_view()
     {
-        size_t count = 0;
-        for (const AniListEntry& entry : m_entries)
-            if (entry.listStatus == kStatuses[m_category]) ++count;
-        const size_t pages = (count + kPageSize - 1) / kPageSize;
-        return pages == 0 ? 1 : pages;
-    }
-
-    void start_page_load()
-    {
-        if (m_worker.joinable())
-            m_worker.join();
-        m_loading = true;
-        m_statusLabel->setText("Loading " + std::string(kStatuses[m_category]) + " list...");
-        m_worker = std::thread([this] {
-            m_pageItems = collect_page_items();
-            download_page_images(m_pageItems);
-            m_ready.store(true, std::memory_order_release);
-        });
-    }
-
-    void update_category_styles()
-    {
-        for (size_t i = 0; i < 6; ++i)
-            if (m_categories[i])
-                m_categories[i]->setBackgroundColor(i == m_category ? nvgRGB(36, 70, 86) : nvgRGB(27, 34, 48));
-    }
-
-    void render_page()
-    {
-        clear_box(m_cards);
-        for (const AniListEntry& entry : m_pageItems)
+        if (m_coverLifetime)
         {
-            std::string progress;
-            if (entry.listStatus == "CURRENT" || entry.listStatus == "REPEATING")
+            // A cover callback from the previous category must not touch the
+            // newly-created cards.
+            m_coverLifetime->store(false, std::memory_order_release);
+        }
+
+        if (m_coverWorker.joinable())
+            m_coverWorker.join();
+
+        m_coverLifetime =
+            std::make_shared<std::atomic<bool>>(true);
+
+        m_matchingEntries = collect_category_items();
+        m_renderedCount = 0;
+        m_pendingCoverJobs.clear();
+        m_coverWorkerDone = true;
+
+        clear_box(m_cards);
+        append_next_batch();
+        start_cover_worker();
+    }
+
+    void append_next_batch()
+    {
+        if (!m_cards)
+            return;
+
+        constexpr size_t perRow = 6;
+        constexpr float rowWidth = 1160.0f;
+        constexpr float rowHeight = 268.0f;
+
+        const size_t start = m_renderedCount;
+        const size_t end = std::min(
+            m_matchingEntries.size(), start + kBatchSize);
+
+        size_t index = start;
+
+        while (index < end)
+        {
+            brls::Box* row = nullptr;
+
+            if (!m_cards->getChildren().empty())
             {
-                progress = "Episode " + std::to_string(entry.progress);
-                if (entry.anime.episodes > 0)
-                    progress += " / " + std::to_string(entry.anime.episodes);
-            }
-            else
-            {
-                progress = entry.listName.empty() ? entry.listStatus : entry.listName;
+                brls::View* last = m_cards->getChildren().back();
+                row = dynamic_cast<brls::Box*>(last);
+
+                if (row && row->getChildren().size() >= perRow)
+                    row = nullptr;
             }
 
-            brls::Box* row = m_cards->getChildren().empty()
-                ? nullptr : dynamic_cast<brls::Box*>(m_cards->getChildren().back());
-            if (!row || row->getChildren().size() >= 6)
+            if (!row)
             {
                 row = new brls::Box(brls::Axis::ROW);
-                row->setWidth(1160.0f);
-                row->setHeight(268.0f);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
                 row->setAlignItems(brls::AlignItems::FLEX_START);
                 m_cards->addView(row);
             }
-            row->addView(make_anime_card(entry.anime, progress));
-        }
-        if (m_pageItems.empty())
-        {
-            brls::Label* empty = new brls::Label();
-            empty->setText("No anime is saved in this list.");
-            empty->setFontSize(17.0f);
-            empty->setTextColor(nvgRGB(174, 184, 200));
-            m_cards->addView(empty);
+
+            while (index < end && row->getChildren().size() < perRow)
+            {
+                const AniListEntry& entry = m_matchingEntries[index];
+
+                std::string progress;
+
+                if (entry.listStatus == "CURRENT" ||
+                    entry.listStatus == "REPEATING")
+                {
+                    progress = "Episode " +
+                        std::to_string(entry.progress);
+
+                    if (entry.anime.episodes > 0)
+                        progress += " / " +
+                            std::to_string(entry.anime.episodes);
+                }
+                else
+                {
+                    progress = entry.listName.empty()
+                        ? entry.listStatus
+                        : entry.listName;
+                }
+
+                brls::Image* image = nullptr;
+                row->addView(
+                    make_anime_card(entry.anime, progress, &image));
+
+                struct stat st;
+                const std::string path =
+                    cached_cover_path(entry.anime.id);
+
+                if (image && !entry.anime.coverUrl.empty() &&
+                    (stat(path.c_str(), &st) != 0 ||
+                     st.st_size <= 256))
+                {
+                    m_pendingCoverJobs.push_back({
+                        image,
+                        entry.anime.coverUrl,
+                        path
+                    });
+                }
+
+                ++index;
+            }
         }
 
-        m_pageInfo->setText("Page " + std::to_string(m_page + 1) + " / " + std::to_string(page_count()));
-        m_previous->setText(m_page > 0 ? "PREVIOUS" : " ");
-        m_next->setText(m_page + 1 < page_count() ? "NEXT" : " ");
+        m_renderedCount = end;
+
+        const bool hasMore =
+            m_renderedCount < m_matchingEntries.size();
+
+        if (hasMore)
+        {
+            brls::Box* moreRow = new brls::Box(brls::Axis::ROW);
+            moreRow->setWidth(rowWidth);
+            moreRow->setHeight(rowHeight);
+            moreRow->setAlignItems(brls::AlignItems::FLEX_START);
+
+            moreRow->addView(make_home_load_more_card([this] {
+                load_more();
+            }));
+
+            m_cards->addView(moreRow);
+        }
+
+        const size_t dataRows =
+            (m_renderedCount + perRow - 1) / perRow;
+
+        const size_t totalRows =
+            dataRows + (hasMore ? 1 : 0);
+
+        m_cards->setHeight(
+            std::max(600.0f,
+                static_cast<float>(totalRows) * rowHeight + 20.0f));
+
         std::string status = m_loadStatus;
+
         if (!m_username.empty())
             status += "  |  @" + m_username;
+
+        status += "  |  " +
+            std::to_string(m_renderedCount) + " / " +
+            std::to_string(m_matchingEntries.size());
+
+        if (hasMore)
+            status += "  |  Select LOAD MORE for another 24.";
+
         m_statusLabel->setText(status);
     }
+
+    void load_more()
+    {
+        if (m_loading ||
+            m_renderedCount >= m_matchingEntries.size())
+            return;
+
+        // Remove only the old Load More row. Existing anime cards remain
+        // untouched, preserving focus/navigation stability.
+        if (m_cards && !m_cards->getChildren().empty())
+        {
+            brls::View* last = m_cards->getChildren().back();
+            brls::Box* moreRow = dynamic_cast<brls::Box*>(last);
+
+            if (moreRow && moreRow->getChildren().size() == 1)
+            {
+                brls::View* moreCard = moreRow->getChildren().front();
+
+                if (brls::Application::getCurrentFocus() == moreCard)
+                {
+                    const auto& rows = m_cards->getChildren();
+
+                    if (rows.size() >= 2)
+                    {
+                        brls::Box* previousRow =
+                            dynamic_cast<brls::Box*>(
+                                rows[rows.size() - 2]);
+
+                        if (previousRow &&
+                            !previousRow->getChildren().empty())
+                        {
+                            brls::Application::giveFocus(
+                                previousRow->getChildren().back());
+                        }
+                    }
+                }
+
+                m_cards->removeView(moreRow);
+            }
+        }
+
+        append_next_batch();
+        start_cover_worker();
+    }
+
+    void start_cover_worker()
+    {
+        if (m_pendingCoverJobs.empty())
+            return;
+
+        if (m_coverWorker.joinable())
+        {
+            if (!m_coverWorkerDone)
+                return;
+
+            m_coverWorker.join();
+        }
+
+        std::vector<CoverJob> jobs;
+        jobs.swap(m_pendingCoverJobs);
+
+        m_coverWorkerDone = false;
+
+        const auto lifetime = m_coverLifetime;
+        const size_t total = jobs.size();
+
+        m_coverWorker = std::thread(
+            [this, lifetime, jobs = std::move(jobs), total] {
+                size_t completed = 0;
+
+                for (const CoverJob& job : jobs)
+                {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    if (!download_image(job.url, job.path))
+                        continue;
+
+                    ++completed;
+
+                    brls::sync([this, lifetime,
+                        image = job.image, path = job.path,
+                        completed, total] {
+                        if (!lifetime->load(std::memory_order_acquire))
+                            return;
+
+                        image->setImageFromFile(path);
+
+                        if (m_statusLabel)
+                        {
+                            m_statusLabel->setText(
+                                "Loading posters: " +
+                                std::to_string(completed) +
+                                " / " +
+                                std::to_string(total));
+                        }
+                    });
+                }
+
+                brls::sync([this, lifetime, completed, total] {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+
+                    m_coverWorkerDone = true;
+
+                    std::string status = m_loadStatus;
+                    if (!m_username.empty())
+                        status += "  |  @" + m_username;
+
+                    status += "  |  " +
+                        std::to_string(m_renderedCount) + " / " +
+                        std::to_string(m_matchingEntries.size());
+
+                    if (m_renderedCount < m_matchingEntries.size())
+                        status += "  |  Select LOAD MORE for another 24.";
+
+                    status += "  |  Posters " +
+                        std::to_string(completed) + "/" +
+                        std::to_string(total);
+
+                    if (m_statusLabel)
+                        m_statusLabel->setText(status);
+                });
+            });
+    }
 };
+
 
 const char* const LibraryActivity::kStatuses[6] = {
     "CURRENT", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REPEATING"
