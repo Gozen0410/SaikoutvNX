@@ -2890,13 +2890,27 @@ public:
         heading->setFocusable(false);
         root->addView(heading);
 
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(590.0f);
+        m_scroll->setMargins(0, 10, 0, 0);
+        m_scroll->setScrollingBehavior(
+            brls::ScrollingBehavior::NATURAL);
+
+        brls::Box* content =
+            new brls::Box(brls::Axis::COLUMN);
+        content->setWidth(1160.0f);
+        content->setHeight(1200.0f);
+        m_scroll->setContentView(content);
+        root->addView(m_scroll);
+
         brls::Label* accountHeading = new brls::Label();
         accountHeading->setText("ANILIST ACCOUNT");
         accountHeading->setFontSize(19.0f);
-        accountHeading->setMargins(0, 16, 0, 5);
+        accountHeading->setMargins(0, 10, 0, 6);
         accountHeading->setTextColor(nvgRGB(220, 228, 240));
         accountHeading->setFocusable(false);
-        root->addView(accountHeading);
+        content->addView(accountHeading);
 
         brls::Label* account = new brls::Label();
         account->setText(load_anilist_token().empty()
@@ -2904,23 +2918,15 @@ public:
             : "AniList account token is saved on this Switch.");
         account->setFontSize(15.0f);
         account->setTextColor(nvgRGB(174, 184, 200));
+        account->setMargins(0, 0, 0, 12);
         account->setFocusable(false);
-        root->addView(account);
-
-        brls::Box* pairDividerTop =
-            new brls::Box(brls::Axis::ROW);
-        pairDividerTop->setWidthPercentage(100.0f);
-        pairDividerTop->setHeight(1.0f);
-        pairDividerTop->setMargins(0, 6, 0, 0);
-        pairDividerTop->setBackgroundColor(nvgRGB(48, 57, 74));
-        pairDividerTop->setFocusable(false);
-        root->addView(pairDividerTop);
+        content->addView(account);
 
         brls::Box* pair =
             new brls::Box(brls::Axis::ROW);
         pair->setWidthPercentage(100.0f);
         pair->setHeight(46.0f);
-        pair->setMargins(0, 12, 0, 12);
+        pair->setMargins(0, 0, 0, 18);
         pair->setPadding(10.0f);
         pair->setAlignItems(brls::AlignItems::CENTER);
         pair->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -2948,46 +2954,37 @@ public:
                     brls::TransitionAnimation::NONE);
                 return true;
             });
-        root->addView(pair);
-
-        brls::Box* pairDividerBottom =
-            new brls::Box(brls::Axis::ROW);
-        pairDividerBottom->setWidthPercentage(100.0f);
-        pairDividerBottom->setHeight(1.0f);
-        pairDividerBottom->setMargins(0, 0, 0, 6);
-        pairDividerBottom->setBackgroundColor(nvgRGB(48, 57, 74));
-        pairDividerBottom->setFocusable(false);
-        root->addView(pairDividerBottom);
+        content->addView(pair);
 
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 20, 0, 6);
+        sourceHeading->setMargins(0, 4, 0, 10);
         sourceHeading->setTextColor(nvgRGB(220, 228, 240));
         sourceHeading->setFocusable(false);
-        root->addView(sourceHeading);
+        content->addView(sourceHeading);
 
-        root->addView(make_preferred_source());
+        content->addView(make_preferred_source());
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
-            root->addView(make_toggle(i));
+            content->addView(make_toggle(i));
 
         brls::Label* sourceHint = new brls::Label();
         sourceHint->setText(
             "Enable the sources you want available for episode lookup.");
         sourceHint->setFontSize(13.0f);
         sourceHint->setTextColor(nvgRGB(135, 147, 166));
-        sourceHint->setMargins(0, 8, 0, 0);
+        sourceHint->setMargins(0, 4, 0, 0);
         sourceHint->setFocusable(false);
-        root->addView(sourceHint);
+        content->addView(sourceHint);
 
         brls::Label* aboutHeading = new brls::Label();
         aboutHeading->setText("APP");
         aboutHeading->setFontSize(19.0f);
-        aboutHeading->setMargins(0, 14, 0, 5);
+        aboutHeading->setMargins(0, 26, 0, 6);
         aboutHeading->setTextColor(nvgRGB(220, 228, 240));
         aboutHeading->setFocusable(false);
-        root->addView(aboutHeading);
+        content->addView(aboutHeading);
 
         m_about = new brls::Label();
         m_about->setText(
@@ -2996,12 +2993,19 @@ public:
         m_about->setFontSize(13.0f);
         m_about->setTextColor(nvgRGB(135, 147, 166));
         m_about->setFocusable(false);
-        root->addView(m_about);
+        content->addView(m_about);
+
+        brls::Padding* bottomSpacer =
+            new brls::Padding();
+        bottomSpacer->setHeight(120.0f);
+        content->addView(bottomSpacer);
+
         log_stage("SETTINGS VIEW BUILT");
         return root;
     }
 
 private:
+    brls::ScrollingFrame* m_scroll = nullptr;
     brls::Label* m_selectedSource = nullptr;
     brls::Label* m_about = nullptr;
 
@@ -3050,7 +3054,7 @@ private:
             new brls::Box(brls::Axis::ROW);
         row->setWidthPercentage(100.0f);
         row->setHeight(46.0f);
-        row->setMargins(0, 4, 0, 0);
+        row->setMargins(0, 0, 0, 10);
         row->setPadding(10.0f);
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -3118,7 +3122,7 @@ private:
             new brls::Box(brls::Axis::ROW);
         toggle->setWidthPercentage(100.0f);
         toggle->setHeight(46.0f);
-        toggle->setMargins(0, 9, 0, 0);
+        toggle->setMargins(0, 0, 0, 10);
         toggle->setPadding(10.0f);
         toggle->setAlignItems(brls::AlignItems::CENTER);
         toggle->setBackgroundColor(nvgRGB(27, 34, 48));
