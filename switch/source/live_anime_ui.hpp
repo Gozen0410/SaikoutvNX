@@ -3288,7 +3288,14 @@ public:
 
             m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
-            start_cover_loading();
+
+            // Wait until the Airing row has also been attached so one Home
+            // cover worker can own a complete, stable set of card targets.
+            if (m_airingAttached && !m_coverStarted)
+            {
+                m_coverStarted = true;
+                start_cover_loading();
+            }
         }
 
         if (m_airingReady.load(std::memory_order_acquire))
@@ -3302,8 +3309,13 @@ public:
             });
             perf_log_count("HOME AIRING CARDS RENDERED", m_airingItems.size());
             m_airingReady.store(false, std::memory_order_release);
-            if (m_attached)
+            m_airingAttached = true;
+
+            if (m_attached && !m_coverStarted)
+            {
+                m_coverStarted = true;
                 start_cover_loading();
+            }
         }
 
         if (m_attached && m_accountReady.load(std::memory_order_acquire))
@@ -3385,6 +3397,8 @@ private:
     std::vector<CoverTarget> m_coverTargets;
     size_t m_coverCompleted = 0;
     size_t m_coverTotal = 0;
+    bool m_airingAttached = false;
+    bool m_coverStarted = false;
 
     void render_continue_cards()
     {
@@ -3609,9 +3623,18 @@ private:
 
     void update_continue_card()
     {
+        // Account changes rebuild the Continue row. Invalidate pending cover
+        // callbacks before replacing those views, then synchronize the worker
+        // before collecting the new image targets.
+        m_coverGeneration.fetch_add(1, std::memory_order_acq_rel);
         render_continue_cards();
+
         if (m_attached)
+        {
+            if (m_coverLoader.joinable())
+                m_coverLoader.join();
             start_cover_loading();
+        }
     }
 
     void connect_navigation(const char* id, const char* name, std::function<void()> callback)
