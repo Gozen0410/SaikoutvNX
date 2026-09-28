@@ -2479,8 +2479,12 @@ private:
             brls::Box* continueRow =
                 new brls::Box(brls::Axis::ROW);
 
+            const bool hasContinueMore =
+                currentCount > kHomeBatchSize;
+
             const size_t totalCards =
-                continueEntries.size();
+                continueEntries.size() +
+                (hasContinueMore ? 1 : 0);
 
             continueRow->setWidth(
                 std::max(
@@ -2526,6 +2530,18 @@ private:
                         coverPath
                     });
                 }
+            }
+
+            if (hasContinueMore)
+            {
+                continueRow->addView(
+                    make_home_load_more_card([this] {
+                        brls::Application::pushActivity(
+                            new LibraryCategoryActivity(
+                                0,
+                                m_entries),
+                            brls::TransitionAnimation::NONE);
+                    }));
             }
 
             continueRow->setDefaultFocusedIndex(0);
