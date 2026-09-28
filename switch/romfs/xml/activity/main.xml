@@ -11,7 +11,7 @@
 
     <brls:Box width="auto" height="2" marginTop="9" marginBottom="12" backgroundColor="#2A3240" />
 
-    <brls:ScrollingFrame id="home/content/scroll" width="auto" height="570" marginTop="4" scrollingBehavior="natural">
+    <brls:ScrollingFrame id="home/content/scroll" width="auto" height="570" marginTop="4" scrollingBehavior="centered">
         <brls:Box id="home/content" width="1160" height="760" axis="column">
             <brls:Label id="home/status" width="auto" height="auto" text="Connecting to AniList..." fontSize="14" textColor="#AEB8C8" />
             <brls:Label width="auto" height="auto" text="Welcome back" fontSize="34" marginTop="7" textColor="#F4F6FA" />
