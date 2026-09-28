@@ -2695,13 +2695,13 @@ private:
 
         m_sections->setHeight(
             std::max(
-                700.0f,
+                900.0f,
                 static_cast<float>(
                     (kCategoryCount - 1) * 304 +
                     (!continueEntries.empty()
                         ? 304
                         : 0) +
-                    100)));
+                    300)));
 
         if (m_statusLabel)
         {
