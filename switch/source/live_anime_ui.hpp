@@ -2978,6 +2978,11 @@ public:
 
         content->addView(make_preferred_source());
 
+        brls::Padding* preferredSourceGap =
+            new brls::Padding();
+        preferredSourceGap->setHeight(14.0f);
+        content->addView(preferredSourceGap);
+
         for (size_t i = 0; i < kApiSourceCount; ++i)
         {
             content->addView(make_toggle(i));
@@ -2997,7 +3002,6 @@ public:
         sourceHint->setFontSize(13.0f);
         sourceHint->setTextColor(nvgRGB(135, 147, 166));
         sourceHint->setFocusable(false);
-
         brls::Padding* sourceHintGap = new brls::Padding();
         sourceHintGap->setHeight(10.0f);
         content->addView(sourceHintGap);
@@ -3074,7 +3078,7 @@ private:
             new brls::Box(brls::Axis::ROW);
         row->setWidthPercentage(100.0f);
         row->setHeight(46.0f);
-        row->setMargins(0, 0, 0, 14);
+        row->setMargins(0, 0, 0, 0);
         row->setPadding(10.0f);
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setBackgroundColor(nvgRGB(27, 34, 48));
