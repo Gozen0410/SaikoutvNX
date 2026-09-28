@@ -2693,9 +2693,16 @@ private:
             m_sections->addView(spacer);
         }
 
+        brls::Padding* bottomSpacer =
+            new brls::Padding();
+        bottomSpacer->setHeight(140.0f);
+        m_sections->addView(bottomSpacer);
+
+        // Keep enough real content extent for the last REWATCHING row
+        // to scroll completely into the 570px viewport.
         m_sections->setHeight(
             std::max(
-                900.0f,
+                2400.0f,
                 static_cast<float>(
                     (kCategoryCount - 1) * 304 +
                     (!continueEntries.empty()
