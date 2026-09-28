@@ -2006,10 +2006,17 @@ public:
 
         m_content->addView(categories);
 
+        m_cardScroll = new brls::ScrollingFrame();
+        m_cardScroll->setWidthPercentage(100.0f);
+        m_cardScroll->setHeight(480.0f);
+        m_cardScroll->setMargins(0, 8, 0, 0);
+        m_cardScroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
         m_cards = new brls::Box(brls::Axis::COLUMN);
-        m_cards->setWidthPercentage(100.0f);
-        m_cards->setMargins(0, 8, 0, 0);
-        m_content->addView(m_cards);
+        m_cards->setWidth(1160.0f);
+        m_cards->setHeight(900.0f);
+        m_cardScroll->setContentView(m_cards);
+        m_content->addView(m_cardScroll);
 
         log_stage("LIBRARY VIEW BUILT");
         return m_content;
@@ -2084,6 +2091,7 @@ private:
     brls::Label* m_statusLabel = nullptr;
     brls::Label* m_pairButton = nullptr;
     brls::Label* m_categories[6]{};
+    brls::ScrollingFrame* m_cardScroll = nullptr;
     brls::Box* m_cards = nullptr;
 
     std::string m_token;
@@ -2140,12 +2148,10 @@ private:
 
     void reset_category_view()
     {
+        // The selected category tab remains a valid focus target while the old
+        // card tree is being destroyed. Invalidate poster callbacks first.
         if (m_coverLifetime)
-        {
-            // A cover callback from the previous category must not touch the
-            // newly-created cards.
             m_coverLifetime->store(false, std::memory_order_release);
-        }
 
         if (m_coverWorker.joinable())
             m_coverWorker.join();
@@ -2153,14 +2159,19 @@ private:
         m_coverLifetime =
             std::make_shared<std::atomic<bool>>(true);
 
-        m_matchingEntries = collect_category_items();
-        m_renderedCount = 0;
         m_pendingCoverJobs.clear();
         m_coverWorkerDone = true;
+        m_matchingEntries = collect_category_items();
+        m_renderedCount = 0;
+
+        if (m_cardScroll)
+            m_cardScroll->setContentOffset(0.0f, 0.0f);
 
         clear_box(m_cards);
         append_next_batch();
         start_cover_worker();
+
+        log_stage("LIBRARY CATEGORY VIEW REBUILT");
     }
 
     void append_next_batch()
@@ -2274,6 +2285,9 @@ private:
         m_cards->setHeight(
             std::max(600.0f,
                 static_cast<float>(totalRows) * rowHeight + 20.0f));
+
+        if (m_cardScroll)
+            m_cardScroll->setContentOffset(0.0f, 0.0f);
 
         std::string status = m_loadStatus;
 
