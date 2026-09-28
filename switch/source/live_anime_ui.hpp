@@ -2313,7 +2313,7 @@ private:
 
         clear_box(m_grid);
 
-        constexpr size_t perRow = 5;
+        constexpr size_t perRow = 6;
         constexpr float rowWidth = 1160.0f;
         constexpr float rowHeight = 252.0f;
 
