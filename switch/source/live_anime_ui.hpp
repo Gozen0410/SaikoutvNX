@@ -1742,6 +1742,7 @@ public:
         m_focusSink = new brls::Padding();
         m_focusSink->setWidth(1.0f);
         m_focusSink->setHeight(1.0f);
+        m_focusSink->alpha = 0.0f;
         m_focusSink->setFocusable(true);
         m_focusSink->registerAction(
             "Pairing no-op",
