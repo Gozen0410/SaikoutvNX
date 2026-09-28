@@ -2311,7 +2311,7 @@ public:
         m_scroll->setWidthPercentage(100.0f);
         m_scroll->setHeight(570.0f);
         m_scroll->setMargins(0, 14, 0, 0);
-        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
         m_sections = new brls::Box(brls::Axis::COLUMN);
         m_sections->setWidth(1160.0f);
@@ -2328,6 +2328,10 @@ public:
         log_stage("ACTIVITY OPEN: Library");
 
         m_token = load_anilist_token();
+
+        if (m_pairButton)
+            m_pairButton->setFocusable(m_token.empty());
+
         if (m_token.empty())
         {
             m_loaded = true;
@@ -2354,6 +2358,21 @@ public:
 
     void tick()
     {
+        // Match Home: when a horizontal scrolling frame itself receives focus,
+        // immediately transfer focus to its first actual anime card.
+        brls::View* currentFocus = brls::Application::getCurrentFocus();
+
+        for (brls::HScrollingFrame* sectionScroll : m_categoryScrolls)
+        {
+            if (!sectionScroll || currentFocus != sectionScroll)
+                continue;
+
+            brls::View* card = sectionScroll->getDefaultFocus();
+            if (card)
+                brls::Application::giveFocus(card);
+            break;
+        }
+
         if (!m_ready.load(std::memory_order_acquire))
             return;
 
@@ -2426,13 +2445,25 @@ private:
 
             m_sections->addView(header);
 
+            if (matching.empty())
+            {
+                brls::Label* empty = new brls::Label();
+                empty->setText("No titles in this list.");
+                empty->setFontSize(15.0f);
+                empty->setTextColor(nvgRGB(135, 147, 166));
+                empty->setFocusable(false);
+                empty->setMargins(0, 5, 0, 9);
+                m_sections->addView(empty);
+                continue;
+            }
+
             brls::HScrollingFrame* scroll =
                 new brls::HScrollingFrame();
             scroll->setWidth(1160.0f);
             scroll->setHeight(260.0f);
             scroll->setMargins(0, 5, 0, 0);
             scroll->setScrollingBehavior(
-                brls::ScrollingBehavior::NATURAL);
+                brls::ScrollingBehavior::CENTERED);
 
             brls::Box* row =
                 new brls::Box(brls::Axis::ROW);
@@ -2453,11 +2484,14 @@ private:
             row->setHeight(252.0f);
             row->setAlignItems(brls::AlignItems::FLEX_START);
 
-            for (size_t index = 0; index < visibleCount; ++index)
+            for (size_t index = 0;
+                 index < visibleCount;
+                 ++index)
             {
                 const AniListEntry& entry = matching[index];
 
                 std::string subtitle;
+
                 if (entry.listStatus == "CURRENT" ||
                     entry.listStatus == "REPEATING")
                 {
@@ -2472,9 +2506,10 @@ private:
                 }
                 else
                 {
-                    subtitle = entry.listName.empty()
-                        ? entry.listStatus
-                        : entry.listName;
+                    subtitle =
+                        entry.listName.empty()
+                            ? entry.listStatus
+                            : entry.listName;
                 }
 
                 row->addView(
@@ -2485,14 +2520,15 @@ private:
             {
                 const size_t categoryCopy = category;
 
-                row->addView(make_home_load_more_card(
-                    [this, categoryCopy] {
-                        brls::Application::pushActivity(
-                            new LibraryCategoryActivity(
-                                categoryCopy,
-                                m_entries),
-                            brls::TransitionAnimation::NONE);
-                    }));
+                row->addView(
+                    make_home_load_more_card(
+                        [this, categoryCopy] {
+                            brls::Application::pushActivity(
+                                new LibraryCategoryActivity(
+                                    categoryCopy,
+                                    m_entries),
+                                brls::TransitionAnimation::NONE);
+                        }));
             }
 
             scroll->setContentView(row);
@@ -2508,15 +2544,17 @@ private:
             std::max(
                 700.0f,
                 static_cast<float>(
-                    kCategoryCount * 304 + 30)));
+                    kCategoryCount * 304 + 100)));
 
         if (m_statusLabel)
         {
             std::string status = m_loadStatus;
+
             if (!m_username.empty())
                 status += "  |  @" + m_username;
 
-            status += "  |  " +
+            status +=
+                "  |  " +
                 std::to_string(m_entries.size()) +
                 " library entries";
 
@@ -2525,6 +2563,8 @@ private:
 
         log_stage("LIBRARY HOME ROWS BUILT");
     }
+
+
 };
 
 
