@@ -2913,7 +2913,7 @@ public:
             : "PAIR AGAIN / CHANGE ANILIST ACCOUNT");
         pair->setFontSize(17.0f);
         pair->setTextColor(nvgRGB(97, 207, 226));
-        pair->setMargins(0, 10, 0, 0);
+        pair->setMargins(0, 14, 0, 14);
         pair->setFocusable(true);
         pair->registerAction(
             "Link AniList account",
@@ -2930,7 +2930,7 @@ public:
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 18, 0, 6);
+        sourceHeading->setMargins(0, 24, 0, 6);
         sourceHeading->setTextColor(nvgRGB(220, 228, 240));
         sourceHeading->setFocusable(false);
         root->addView(sourceHeading);
