@@ -21,7 +21,7 @@
                 <brls:Label width="auto" height="auto" text="CONTINUE WATCHING" fontSize="19" textColor="#DCE4F0" />
                 <brls:Label id="home/continue/subtitle" width="auto" height="auto" text="Watch progress" fontSize="13" textColor="#8793A6" />
             </brls:Box>
-            <brls:HScrollingFrame id="home/continue/scroll" width="auto" height="260" marginTop="5" scrollingBehavior="natural">
+            <brls:HScrollingFrame id="home/continue/scroll" width="auto" height="260" marginTop="5" scrollingBehavior="centered">
                 <brls:Box id="home/card/continue" width="4760" height="260" axis="row" />
             </brls:HScrollingFrame>
 
