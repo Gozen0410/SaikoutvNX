@@ -36,7 +36,7 @@
                 <brls:Label width="auto" height="auto" text="Currently releasing on AniList" fontSize="13" textColor="#8793A6" />
             </brls:Box>
             <brls:HScrollingFrame id="home/latest/scroll" width="auto" height="260" marginTop="5" scrollingBehavior="natural">
-                <brls:Box id="home/latest/cards" width="1400" height="260" axis="row" />
+                <brls:Box id="home/latest/cards" width="4760" height="260" axis="row" />
             </brls:HScrollingFrame>
         </brls:Box>
     </brls:ScrollingFrame>
