@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <memory>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -1096,7 +1097,10 @@ static std::string compact_card_title(const std::string& title)
     return title.substr(0, cut) + "...";
 }
 
-static brls::Box* make_anime_card(const SaikouAnime& anime, const std::string& subtitle = std::string())
+static brls::Box* make_anime_card(
+    const SaikouAnime& anime,
+    const std::string& subtitle = std::string(),
+    brls::Image** imageOut = nullptr)
 {
     brls::Box* card = new brls::Box(brls::Axis::COLUMN);
     card->setWidth(184.0f);
@@ -1110,26 +1114,25 @@ static brls::Box* make_anime_card(const SaikouAnime& anime, const std::string& s
     card->setFocusable(true);
     card->setHighlightPadding(4.0f);
 
-    const std::string imagePath = anime.posterPath.empty() ? cached_cover_path(anime.id) : anime.posterPath;
+    const std::string imagePath = anime.posterPath.empty()
+        ? cached_cover_path(anime.id)
+        : anime.posterPath;
     struct stat st;
     const float posterHeight = subtitle.empty() ? 168.0f : 148.0f;
+
+    brls::Image* poster = new brls::Image();
+    poster->setDimensions(168.0f, posterHeight);
+    poster->setScalingType(brls::ImageScalingType::FIT);
+    poster->setBackgroundColor(nvgRGB(35, 45, 62));
+    poster->setFocusable(false);
+
     if (stat(imagePath.c_str(), &st) == 0 && st.st_size > 256)
-    {
-        brls::Image* poster = new brls::Image();
-        poster->setDimensions(168.0f, posterHeight);
-        poster->setScalingType(brls::ImageScalingType::FIT);
         poster->setImageFromFile(imagePath);
-        poster->setFocusable(false);
-        card->addView(poster);
-    }
-    else
-    {
-        brls::Box* placeholder = new brls::Box();
-        placeholder->setDimensions(168.0f, posterHeight);
-        placeholder->setBackgroundColor(nvgRGB(35, 45, 62));
-        placeholder->setFocusable(false);
-        card->addView(placeholder);
-    }
+
+    if (imageOut)
+        *imageOut = poster;
+
+    card->addView(poster);
 
     brls::Label* score = new brls::Label();
     score->setText(anime.score > 0 ? "AniList  " + std::to_string(anime.score) + "/100" : "AniList score unavailable");
@@ -1240,8 +1243,11 @@ public:
 
     ~SearchActivity() override
     {
+        m_lifetime->store(false, std::memory_order_release);
         if (m_worker.joinable())
             m_worker.join();
+        if (m_imageWorker.joinable())
+            m_imageWorker.join();
         if (g_searchActivity == this)
             g_searchActivity = nullptr;
     }
@@ -1316,8 +1322,10 @@ public:
         m_loading = false;
         m_resultReady.store(false, std::memory_order_release);
 
+        ++m_renderGeneration;
         render_results();
-        perf_log_count("SEARCH RESULTS RENDERED", m_resultItems.size());
+        perf_log_count("SEARCH FIRST VISIBLE CARDS RENDERED", m_resultItems.size());
+        start_progressive_image_load();
 
         if (m_status)
         {
@@ -1343,7 +1351,11 @@ private:
     std::string m_resultStatus;
     std::vector<SaikouAnime> m_resultItems;
     std::thread m_worker;
+    std::thread m_imageWorker;
     std::atomic<bool> m_resultReady{ false };
+    std::atomic<uint64_t> m_renderGeneration{ 0 };
+    std::shared_ptr<std::atomic<bool>> m_lifetime =
+        std::make_shared<std::atomic<bool>>(true);
 
     bool m_loading = false;
     bool m_hasMore = true;
@@ -1401,6 +1413,9 @@ private:
         m_pendingQuery = query;
         m_page = 1;
         m_hasMore = true;
+        ++m_renderGeneration;
+        if (m_imageWorker.joinable())
+            m_imageWorker.join();
         m_resultItems.clear();
 
         if (m_queryLabel)
@@ -1446,24 +1461,107 @@ private:
             std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d METADATA RECEIVED", page);
             perf_log_count(stage, newItems.size());
 
-            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d COVERS START", page);
-            perf_log(stage);
             for (SaikouAnime& anime : newItems)
-            {
                 anime.posterPath = cached_cover_path(anime.id);
-                if (!download_image(anime.coverUrl, anime.posterPath))
-                    anime.posterPath.clear();
-            }
-            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d COVERS DONE", page);
-            perf_log(stage);
 
             if (newItems.size() < 24)
                 m_hasMore = false;
 
             m_resultItems.insert(m_resultItems.end(), newItems.begin(), newItems.end());
-
             m_resultReady.store(true, std::memory_order_release);
         });
+    }
+
+    void start_progressive_image_load()
+    {
+        if (m_imageWorker.joinable())
+            m_imageWorker.join();
+
+        if (m_resultItems.empty() || !m_results)
+            return;
+
+        std::vector<brls::Image*> posters;
+        posters.reserve(m_resultItems.size());
+
+        for (brls::View* rowView : m_results->getChildren())
+        {
+            brls::Box* row = dynamic_cast<brls::Box*>(rowView);
+            if (!row) continue;
+
+            for (brls::View* cardView : row->getChildren())
+            {
+                brls::Box* card = dynamic_cast<brls::Box*>(cardView);
+                if (!card) continue;
+
+                const auto children = card->getChildren();
+                if (children.empty()) continue;
+
+                brls::Image* poster =
+                    dynamic_cast<brls::Image*>(children.front());
+                if (poster && posters.size() < m_resultItems.size())
+                    posters.push_back(poster);
+            }
+        }
+
+        // The final row contains the Load More card, which has no poster Image,
+        // so only the anime-card image slots should have been collected.
+        if (posters.size() != m_resultItems.size())
+        {
+            perf_log_count("SEARCH PROGRESSIVE IMAGE SLOT MISMATCH", posters.size());
+            return;
+        }
+
+        const uint64_t generation =
+            m_renderGeneration.load(std::memory_order_acquire);
+        const auto lifetime = m_lifetime;
+        const std::vector<SaikouAnime> items = m_resultItems;
+
+        perf_log_count("SEARCH PROGRESSIVE IMAGE LOAD START", items.size());
+
+        m_imageWorker = std::thread(
+            [this, lifetime, generation, items, posters] {
+                size_t completed = 0;
+
+                for (size_t index = 0; index < items.size(); ++index)
+                {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+                    if (m_renderGeneration.load(std::memory_order_acquire) != generation)
+                        return;
+
+                    const SaikouAnime& anime = items[index];
+                    const std::string path = cached_cover_path(anime.id);
+
+                    if (!download_image(anime.coverUrl, path))
+                        continue;
+
+                    ++completed;
+                    brls::sync([this, lifetime, generation,
+                        poster = posters[index], path, completed] {
+                        if (!lifetime->load(std::memory_order_acquire))
+                            return;
+                        if (m_renderGeneration.load(std::memory_order_acquire) != generation)
+                            return;
+
+                        poster->setImageFromFile(path);
+
+                        char stage[128];
+                        std::snprintf(stage, sizeof(stage),
+                            "SEARCH PROGRESSIVE IMAGE READY %zu", completed);
+                        perf_log(stage);
+                    });
+                }
+
+                brls::sync([this, lifetime, generation, completed] {
+                    if (!lifetime->load(std::memory_order_acquire))
+                        return;
+                    if (m_renderGeneration.load(std::memory_order_acquire) != generation)
+                        return;
+
+                    perf_log_count(
+                        "SEARCH PROGRESSIVE IMAGE LOAD DONE", completed);
+                });
+            });
     }
 
     brls::Box* make_search_load_more_card()
@@ -1502,7 +1600,7 @@ private:
 
             const size_t stop = std::min(m_resultItems.size(), index + perRow);
             for (; index < stop; ++index)
-                row->addView(make_anime_card(m_resultItems[index]));
+                row->addView(make_anime_card(m_resultItems[index], std::string(), nullptr));
 
             m_results->addView(row);
         }
