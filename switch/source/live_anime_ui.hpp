@@ -2424,6 +2424,131 @@ private:
         clear_box(m_sections);
         m_categoryScrolls.clear();
 
+        std::vector<AniListEntry> continueEntries;
+
+        for (const AniListEntry& entry : m_entries)
+        {
+            if (entry.listStatus == "CURRENT" &&
+                continueEntries.size() < kHomeBatchSize)
+            {
+                continueEntries.push_back(entry);
+            }
+        }
+
+        if (!continueEntries.empty())
+        {
+            brls::Box* continueHeader =
+                new brls::Box(brls::Axis::ROW);
+            continueHeader->setWidth(1160.0f);
+            continueHeader->setHeight(28.0f);
+            continueHeader->setAlignItems(
+                brls::AlignItems::CENTER);
+
+            brls::Label* continueTitle =
+                new brls::Label();
+            continueTitle->setText("CONTINUE WATCHING");
+            continueTitle->setFontSize(19.0f);
+            continueTitle->setTextColor(
+                nvgRGB(220, 228, 240));
+            continueHeader->addView(continueTitle);
+
+            brls::Label* continueCount =
+                new brls::Label();
+            continueCount->setText(
+                "  " +
+                std::to_string(continueEntries.size()));
+            continueCount->setFontSize(13.0f);
+            continueCount->setTextColor(
+                nvgRGB(135, 147, 166));
+            continueHeader->addView(continueCount);
+
+            m_sections->addView(continueHeader);
+
+            brls::HScrollingFrame* continueScroll =
+                new brls::HScrollingFrame();
+            continueScroll->setWidth(1160.0f);
+            continueScroll->setHeight(260.0f);
+            continueScroll->setMargins(0, 5, 0, 0);
+            continueScroll->setScrollingBehavior(
+                brls::ScrollingBehavior::CENTERED);
+
+            brls::Box* continueRow =
+                new brls::Box(brls::Axis::ROW);
+
+            const size_t totalCards =
+                continueEntries.size();
+
+            continueRow->setWidth(
+                std::max(
+                    1160.0f,
+                    static_cast<float>(totalCards) * 192.0f));
+            continueRow->setHeight(252.0f);
+            continueRow->setAlignItems(
+                brls::AlignItems::FLEX_START);
+
+            for (const AniListEntry& entry : continueEntries)
+            {
+                std::string subtitle =
+                    "Episode " +
+                    std::to_string(entry.progress);
+
+                if (entry.anime.episodes > 0)
+                    subtitle +=
+                        " / " +
+                        std::to_string(entry.anime.episodes);
+
+                brls::Image* poster = nullptr;
+
+                continueRow->addView(
+                    make_anime_card(
+                        entry.anime,
+                        subtitle,
+                        &poster));
+
+                struct stat st;
+                const std::string coverPath =
+                    cached_cover_path(entry.anime.id);
+
+                if (poster &&
+                    !entry.anime.coverUrl.empty() &&
+                    (stat(
+                        coverPath.c_str(),
+                        &st) != 0 ||
+                     st.st_size <= 256))
+                {
+                    m_pendingCoverJobs.push_back({
+                        poster,
+                        entry.anime.coverUrl,
+                        coverPath
+                    });
+                }
+            }
+
+            continueRow->setDefaultFocusedIndex(0);
+            continueScroll->setContentView(continueRow);
+            m_sections->addView(continueScroll);
+            m_categoryScrolls.push_back(
+                continueScroll);
+
+            brls::Padding* continueSpacer =
+                new brls::Padding();
+            continueSpacer->setHeight(14.0f);
+            m_sections->addView(continueSpacer);
+
+            char marker[128];
+            std::snprintf(
+                marker,
+                sizeof(marker),
+                "LIBRARY CONTINUE ROW BUILT count=%zu",
+                continueEntries.size());
+            log_stage(marker);
+        }
+        else
+        {
+            log_stage(
+                "LIBRARY CONTINUE ROW BUILT count=0");
+        }
+
         for (size_t category = 0;
              category < kCategoryCount;
              ++category)
@@ -2572,7 +2697,11 @@ private:
             std::max(
                 700.0f,
                 static_cast<float>(
-                    kCategoryCount * 304 + 100)));
+                    kCategoryCount * 304 +
+                    (!continueEntries.empty()
+                        ? 304
+                        : 0) +
+                    100)));
 
         if (m_statusLabel)
         {
