@@ -2165,7 +2165,7 @@ private:
         m_renderedCount = 0;
 
         if (m_cardScroll)
-            m_cardScroll->setContentOffset(0.0f, 0.0f);
+            m_cardScroll->setContentOffsetY(0.0f, 0.0f);
 
         clear_box(m_cards);
         append_next_batch();
@@ -2287,7 +2287,7 @@ private:
                 static_cast<float>(totalRows) * rowHeight + 20.0f));
 
         if (m_cardScroll)
-            m_cardScroll->setContentOffset(0.0f, 0.0f);
+            m_cardScroll->setContentOffsetY(0.0f, 0.0f);
 
         std::string status = m_loadStatus;
 
