@@ -2907,11 +2907,20 @@ public:
         account->setFocusable(false);
         root->addView(account);
 
+        brls::Box* pairDividerTop =
+            new brls::Box(brls::Axis::ROW);
+        pairDividerTop->setWidthPercentage(100.0f);
+        pairDividerTop->setHeight(1.0f);
+        pairDividerTop->setMargins(0, 10, 0, 0);
+        pairDividerTop->setBackgroundColor(nvgRGB(48, 57, 74));
+        pairDividerTop->setFocusable(false);
+        root->addView(pairDividerTop);
+
         brls::Box* pair =
             new brls::Box(brls::Axis::ROW);
         pair->setWidthPercentage(100.0f);
         pair->setHeight(72.0f);
-        pair->setMargins(0, 18, 0, 22);
+        pair->setMargins(0, 18, 0, 18);
         pair->setPadding(14.0f);
         pair->setAlignItems(brls::AlignItems::CENTER);
         pair->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -2940,6 +2949,15 @@ public:
                 return true;
             });
         root->addView(pair);
+
+        brls::Box* pairDividerBottom =
+            new brls::Box(brls::Axis::ROW);
+        pairDividerBottom->setWidthPercentage(100.0f);
+        pairDividerBottom->setHeight(1.0f);
+        pairDividerBottom->setMargins(0, 0, 0, 10);
+        pairDividerBottom->setBackgroundColor(nvgRGB(48, 57, 74));
+        pairDividerBottom->setFocusable(false);
+        root->addView(pairDividerBottom);
 
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
