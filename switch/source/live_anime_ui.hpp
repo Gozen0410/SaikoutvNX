@@ -1936,7 +1936,7 @@ static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
         item.anime.posterPath = cached_cover_path(item.anime.id);
         items.push_back(item);
 
-        if (items.size() >= 6)
+        if (items.size() >= 24)
             break;
     }
 
@@ -1948,13 +1948,18 @@ static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
     return items;
 }
 
-static bool load_local_continue_watching(ContinueWatchItem& item)
+static std::vector<ContinueWatchItem> load_local_continue_watching()
 {
+    std::vector<ContinueWatchItem> items;
     FILE* file = std::fopen(kLocalContinuePath, "r");
     if (!file)
-        return false;
+        return items;
 
+    ContinueWatchItem legacy;
+    bool sawLegacy = false;
+    std::map<int, ContinueWatchItem> byIndex;
     char line[2048] = {};
+
     while (std::fgets(line, sizeof(line), file))
     {
         std::string value(line);
@@ -1968,30 +1973,99 @@ static bool load_local_continue_watching(ContinueWatchItem& item)
         const std::string key = value.substr(0, split);
         const std::string data = value.substr(split + 1);
 
+        auto parseIndexed = [&](const std::string& prefix, int& index, std::string& field) -> bool {
+            if (key.rfind(prefix, 0) != 0)
+                return false;
+            const size_t dot = key.find('.', prefix.size());
+            if (dot == std::string::npos)
+                return false;
+            index = std::atoi(key.substr(prefix.size(), dot - prefix.size()).c_str());
+            field = key.substr(dot + 1);
+            return index >= 0 && index < 24;
+        };
+
+        int index = 0;
+        std::string field;
+        if (parseIndexed("item", index, field))
+        {
+            ContinueWatchItem& item = byIndex[index];
+            if (field == "id")
+                item.anime.id = std::atoi(data.c_str());
+            else if (field == "title")
+                item.anime.title = data;
+            else if (field == "coverUrl")
+                item.anime.coverUrl = data;
+            else if (field == "episodes")
+                item.anime.episodes = std::atoi(data.c_str());
+            else if (field == "progress")
+                item.progress = std::atoi(data.c_str());
+            continue;
+        }
+
+        // Backward compatibility with the original single-entry file format.
+        sawLegacy = true;
         if (key == "id")
-            item.anime.id = std::atoi(data.c_str());
+            legacy.anime.id = std::atoi(data.c_str());
         else if (key == "title")
-            item.anime.title = data;
+            legacy.anime.title = data;
         else if (key == "coverUrl")
-            item.anime.coverUrl = data;
+            legacy.anime.coverUrl = data;
         else if (key == "episodes")
-            item.anime.episodes = std::atoi(data.c_str());
+            legacy.anime.episodes = std::atoi(data.c_str());
         else if (key == "progress")
-            item.progress = std::atoi(data.c_str());
+            legacy.progress = std::atoi(data.c_str());
     }
 
     std::fclose(file);
-    if (item.anime.id <= 0 || item.anime.title.empty())
-        return false;
 
-    item.anime.posterPath = cached_cover_path(item.anime.id);
-    return true;
+    if (sawLegacy && legacy.anime.id > 0 && !legacy.anime.title.empty())
+    {
+        legacy.anime.posterPath = cached_cover_path(legacy.anime.id);
+        items.push_back(legacy);
+    }
+
+    for (const auto& entry : byIndex)
+    {
+        if (entry.second.anime.id <= 0 || entry.second.anime.title.empty())
+            continue;
+
+        ContinueWatchItem item = entry.second;
+        item.anime.posterPath = cached_cover_path(item.anime.id);
+        items.push_back(item);
+
+        if (items.size() >= 24)
+            break;
+    }
+
+    return items;
 }
 
 // Called by the future video-player path whenever playback actually starts/resumes.
-// Keeping this separate from opening an anime-details page prevents false progress.
+// Upserts the title, keeps the newest progress, and caps local history at 24 titles.
 static bool save_local_continue_watching(const ContinueWatchItem& item)
 {
+    if (item.anime.id <= 0 || item.anime.title.empty())
+        return false;
+
+    std::vector<ContinueWatchItem> items = load_local_continue_watching();
+    bool replaced = false;
+
+    for (ContinueWatchItem& existing : items)
+    {
+        if (existing.anime.id != item.anime.id)
+            continue;
+
+        existing = item;
+        replaced = true;
+        break;
+    }
+
+    if (!replaced)
+        items.insert(items.begin(), item);
+
+    if (items.size() > 24)
+        items.resize(24);
+
     mkdir("sdmc:/switch", 0777);
     mkdir("sdmc:/switch/SaikouTV", 0777);
 
@@ -1999,11 +2073,16 @@ static bool save_local_continue_watching(const ContinueWatchItem& item)
     if (!file)
         return false;
 
-    std::fprintf(file, "id=%d\n", item.anime.id);
-    std::fprintf(file, "title=%s\n", item.anime.title.c_str());
-    std::fprintf(file, "coverUrl=%s\n", item.anime.coverUrl.c_str());
-    std::fprintf(file, "episodes=%d\n", item.anime.episodes);
-    std::fprintf(file, "progress=%d\n", item.progress);
+    for (size_t i = 0; i < items.size() && i < 24; ++i)
+    {
+        const ContinueWatchItem& current = items[i];
+        std::fprintf(file, "item%zu.id=%d\n", i, current.anime.id);
+        std::fprintf(file, "item%zu.title=%s\n", i, current.anime.title.c_str());
+        std::fprintf(file, "item%zu.coverUrl=%s\n", i, current.anime.coverUrl.c_str());
+        std::fprintf(file, "item%zu.episodes=%d\n", i, current.anime.episodes);
+        std::fprintf(file, "item%zu.progress=%d\n", i, current.progress);
+    }
+
     std::fclose(file);
     return true;
 }
@@ -2082,16 +2161,10 @@ public:
                 }
                 else
                 {
-                    ContinueWatchItem localItem;
-                    if (load_local_continue_watching(localItem))
-                    {
-                        m_continueItems.push_back(localItem);
-                        m_continueMessage = "Local watch progress on this Switch.";
-                    }
-                    else
-                    {
-                        m_continueMessage = "Watch something and it will appear here.";
-                    }
+                    m_continueItems = load_local_continue_watching();
+                    m_continueMessage = m_continueItems.empty()
+                        ? "Watch something and it will appear here."
+                        : "Local watch progress on this Switch.";
                 }
                 m_ready.store(true, std::memory_order_release);
             });
@@ -2162,16 +2235,10 @@ public:
                 }
                 else
                 {
-                    ContinueWatchItem localItem;
-                    if (load_local_continue_watching(localItem))
-                    {
-                        m_continueItems.push_back(localItem);
-                        m_continueMessage = "Local watch progress on this Switch.";
-                    }
-                    else
-                    {
-                        m_continueMessage = "Watch something and it will appear here.";
-                    }
+                    m_continueItems = load_local_continue_watching();
+                    m_continueMessage = m_continueItems.empty()
+                        ? "Watch something and it will appear here."
+                        : "Local watch progress on this Switch.";
                 }
                 m_accountReady.store(true, std::memory_order_release);
             });
@@ -2231,7 +2298,9 @@ private:
             row->addView(make_anime_card(item.anime, subtitle));
         }
 
+        row->setDefaultFocusedIndex(0);
         m_continueBox->setFocusable(false);
+        m_continueBox->setDefaultFocusedIndex(0);
         m_continueBox->addView(row);
 
         if (m_continueTitle)
