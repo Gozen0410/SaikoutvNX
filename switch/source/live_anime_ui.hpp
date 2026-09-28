@@ -2911,7 +2911,7 @@ public:
             new brls::Box(brls::Axis::ROW);
         pairDividerTop->setWidthPercentage(100.0f);
         pairDividerTop->setHeight(1.0f);
-        pairDividerTop->setMargins(0, 10, 0, 0);
+        pairDividerTop->setMargins(0, 6, 0, 0);
         pairDividerTop->setBackgroundColor(nvgRGB(48, 57, 74));
         pairDividerTop->setFocusable(false);
         root->addView(pairDividerTop);
@@ -2919,9 +2919,9 @@ public:
         brls::Box* pair =
             new brls::Box(brls::Axis::ROW);
         pair->setWidthPercentage(100.0f);
-        pair->setHeight(72.0f);
-        pair->setMargins(0, 18, 0, 18);
-        pair->setPadding(14.0f);
+        pair->setHeight(46.0f);
+        pair->setMargins(0, 12, 0, 12);
+        pair->setPadding(10.0f);
         pair->setAlignItems(brls::AlignItems::CENTER);
         pair->setBackgroundColor(nvgRGB(27, 34, 48));
         pair->setBorderColor(nvgRGB(48, 57, 74));
@@ -2954,7 +2954,7 @@ public:
             new brls::Box(brls::Axis::ROW);
         pairDividerBottom->setWidthPercentage(100.0f);
         pairDividerBottom->setHeight(1.0f);
-        pairDividerBottom->setMargins(0, 0, 0, 10);
+        pairDividerBottom->setMargins(0, 0, 0, 6);
         pairDividerBottom->setBackgroundColor(nvgRGB(48, 57, 74));
         pairDividerBottom->setFocusable(false);
         root->addView(pairDividerBottom);
@@ -2997,7 +2997,6 @@ public:
         m_about->setTextColor(nvgRGB(135, 147, 166));
         m_about->setFocusable(false);
         root->addView(m_about);
-
         log_stage("SETTINGS VIEW BUILT");
         return root;
     }
