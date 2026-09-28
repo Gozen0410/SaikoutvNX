@@ -2058,6 +2058,7 @@ public:
         m_loaded = true;
         update_category_styles();
 
+        m_matchingEntries = collect_category_items();
         m_renderedCount = 0;
         clear_box(m_cards);
         append_next_batch();
@@ -2106,6 +2107,20 @@ private:
     bool m_loading = false;
     bool m_loaded = false;
     size_t m_category = 0;
+
+    void update_category_styles()
+    {
+        for (size_t i = 0; i < 6; ++i)
+        {
+            if (!m_categories[i])
+                continue;
+
+            m_categories[i]->setBackgroundColor(
+                i == m_category
+                    ? nvgRGB(36, 70, 86)
+                    : nvgRGB(27, 34, 48));
+        }
+    }
 
     std::vector<AniListEntry> collect_category_items() const
     {
@@ -2271,6 +2286,8 @@ private:
 
         if (hasMore)
             status += "  |  Select LOAD MORE for another 24.";
+        else if (m_matchingEntries.empty())
+            status += "  |  No anime in this list.";
 
         m_statusLabel->setText(status);
     }
