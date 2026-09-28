@@ -53,6 +53,7 @@ static constexpr const char* kSettingsPath = "sdmc:/switch/SaikouTV/settings.ini
 static constexpr const char* kAniListTokenPath = "sdmc:/switch/SaikouTV/anilistToken";
 static constexpr const char* kCacheDir = "sdmc:/switch/SaikouTV/cache";
 static constexpr const char* kLocalContinuePath = "sdmc:/switch/SaikouTV/continue.ini";
+static constexpr size_t kLocalContinueCapacity = 120;
 
 static void register_page_back_action(brls::View* root)
 {
@@ -1984,7 +1985,7 @@ struct ContinueWatchItem
 };
 
 static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
-    const std::string& token, std::string& message)
+    const std::string& token, std::string& message, size_t maxItems = 24)
 {
     std::vector<ContinueWatchItem> items;
     if (token.empty())
@@ -2008,7 +2009,7 @@ static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
         item.anime.posterPath = cached_cover_path(item.anime.id);
         items.push_back(item);
 
-        if (items.size() >= 24)
+        if (maxItems > 0 && items.size() >= maxItems)
             break;
     }
 
@@ -2020,7 +2021,7 @@ static std::vector<ContinueWatchItem> fetch_anilist_continue_watching(
     return items;
 }
 
-static std::vector<ContinueWatchItem> load_local_continue_watching()
+static std::vector<ContinueWatchItem> load_local_continue_watching(size_t maxItems = 24)
 {
     std::vector<ContinueWatchItem> items;
     FILE* file = std::fopen(kLocalContinuePath, "r");
@@ -2053,7 +2054,7 @@ static std::vector<ContinueWatchItem> load_local_continue_watching()
                 return false;
             index = std::atoi(key.substr(prefix.size(), dot - prefix.size()).c_str());
             field = key.substr(dot + 1);
-            return index >= 0 && index < 24;
+            return index >= 0 && index < static_cast<int>(kLocalContinueCapacity);
         };
 
         int index = 0;
@@ -2105,7 +2106,7 @@ static std::vector<ContinueWatchItem> load_local_continue_watching()
         item.anime.posterPath = cached_cover_path(item.anime.id);
         items.push_back(item);
 
-        if (items.size() >= 24)
+        if (maxItems > 0 && items.size() >= maxItems)
             break;
     }
 
@@ -2119,7 +2120,7 @@ static bool save_local_continue_watching(const ContinueWatchItem& item)
     if (item.anime.id <= 0 || item.anime.title.empty())
         return false;
 
-    std::vector<ContinueWatchItem> items = load_local_continue_watching();
+    std::vector<ContinueWatchItem> items = load_local_continue_watching(0);
     bool replaced = false;
 
     for (ContinueWatchItem& existing : items)
@@ -2135,8 +2136,8 @@ static bool save_local_continue_watching(const ContinueWatchItem& item)
     if (!replaced)
         items.insert(items.begin(), item);
 
-    if (items.size() > 24)
-        items.resize(24);
+    if (items.size() > kLocalContinueCapacity)
+        items.resize(kLocalContinueCapacity);
 
     mkdir("sdmc:/switch", 0777);
     mkdir("sdmc:/switch/SaikouTV", 0777);
@@ -2145,7 +2146,7 @@ static bool save_local_continue_watching(const ContinueWatchItem& item)
     if (!file)
         return false;
 
-    for (size_t i = 0; i < items.size() && i < 24; ++i)
+    for (size_t i = 0; i < items.size() && i < kLocalContinueCapacity; ++i)
     {
         const ContinueWatchItem& current = items[i];
         std::fprintf(file, "item%zu.id=%d\n", i, current.anime.id);
@@ -2586,6 +2587,208 @@ private:
     }
 };
 
+class ContinueCatalogActivity;
+static ContinueCatalogActivity* g_continueCatalogActivity = nullptr;
+
+class ContinueCatalogActivity : public brls::Activity
+{
+public:
+    ContinueCatalogActivity()
+    {
+        g_continueCatalogActivity = this;
+    }
+
+    ~ContinueCatalogActivity() override
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+        if (g_continueCatalogActivity == this)
+            g_continueCatalogActivity = nullptr;
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
+        root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
+        root->setPadding(30.0f);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("CONTINUE WATCHING");
+        heading->setFontSize(30.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        m_status = new brls::Label();
+        m_status->setText("Loading watch history...");
+        m_status->setFontSize(14.0f);
+        m_status->setTextColor(nvgRGB(174, 184, 200));
+        m_status->setMargins(0, 7, 0, 0);
+        root->addView(m_status);
+
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(600.0f);
+        m_scroll->setMargins(0, 12, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
+        m_grid = new brls::Box(brls::Axis::COLUMN);
+        m_grid->setWidth(1160.0f);
+        m_grid->setHeight(900.0f);
+        m_scroll->setContentView(m_grid);
+        root->addView(m_scroll);
+        return root;
+    }
+
+    void onContentAvailable() override
+    {
+        start_load();
+    }
+
+    void tick()
+    {
+        if (!m_ready.load(std::memory_order_acquire))
+            return;
+
+        if (m_worker.joinable())
+            m_worker.join();
+
+        render_first_batch();
+        m_ready.store(false, std::memory_order_release);
+        m_loading = false;
+    }
+
+private:
+    brls::Label* m_status = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
+    brls::Box* m_grid = nullptr;
+    std::vector<ContinueWatchItem> m_allItems;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    bool m_loading = false;
+    bool m_hasMore = false;
+    size_t m_renderedCount = 0;
+
+    void start_load()
+    {
+        if (m_loading)
+            return;
+
+        m_loading = true;
+        m_ready.store(false, std::memory_order_release);
+
+        m_worker = std::thread([this] {
+            const std::string token = load_anilist_token();
+            if (!token.empty())
+            {
+                m_allItems = fetch_anilist_continue_watching(token, m_statusText, 0);
+                for (ContinueWatchItem& item : m_allItems)
+                {
+                    item.anime.posterPath = cached_cover_path(item.anime.id);
+                    if (!download_image(item.anime.coverUrl, item.anime.posterPath))
+                        item.anime.posterPath.clear();
+                }
+            }
+            else
+            {
+                m_allItems = load_local_continue_watching(0);
+                m_statusText = m_allItems.empty()
+                    ? "Watch something and it will appear here."
+                    : "Local watch progress on this Switch.";
+            }
+
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
+
+    void render_first_batch()
+    {
+        clear_box(m_grid);
+        m_renderedCount = 0;
+
+        append_batch();
+    }
+
+    void append_batch()
+    {
+        constexpr size_t batchSize = 30;
+        const size_t start = m_renderedCount;
+        const size_t end = std::min(m_allItems.size(), start + batchSize);
+
+        for (size_t index = start; index < end; ++index)
+        {
+            brls::Box* row = nullptr;
+
+            if (!m_grid->getChildren().empty())
+            {
+                row = dynamic_cast<brls::Box*>(m_grid->getChildren().back());
+                if (!row || row->getChildren().size() >= 6)
+                    row = nullptr;
+            }
+
+            if (!row)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(1160.0f);
+                row->setHeight(252.0f);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_grid->addView(row);
+            }
+
+            std::string subtitle = "Episode " +
+                std::to_string(m_allItems[index].progress);
+            if (m_allItems[index].anime.episodes > 0)
+                subtitle += " / " +
+                    std::to_string(m_allItems[index].anime.episodes);
+
+            row->addView(make_anime_card(m_allItems[index].anime, subtitle));
+        }
+
+        m_renderedCount = end;
+        m_hasMore = m_renderedCount < m_allItems.size();
+
+        if (m_hasMore)
+        {
+            brls::Box* moreRow = new brls::Box(brls::Axis::ROW);
+            moreRow->setWidth(1160.0f);
+            moreRow->setHeight(252.0f);
+            moreRow->setAlignItems(brls::AlignItems::FLEX_START);
+
+            moreRow->addView(make_home_load_more_card([this] {
+                remove_load_more_row();
+                append_batch();
+            }));
+            m_grid->addView(moreRow);
+        }
+
+        const size_t dataRows = (m_renderedCount + 5) / 6;
+        const size_t totalRows = dataRows + (m_hasMore ? 1 : 0);
+        m_grid->setHeight(
+            std::max(600.0f, static_cast<float>(totalRows) * 252.0f + 20.0f));
+
+        if (m_status)
+        {
+            m_status->setText(
+                std::to_string(m_renderedCount) + " of " +
+                std::to_string(m_allItems.size()) + " watch entries");
+        }
+    }
+
+    void remove_load_more_row()
+    {
+        if (m_grid && !m_grid->getChildren().empty())
+        {
+            brls::View* last = m_grid->getChildren().back();
+            if (dynamic_cast<brls::Box*>(last))
+                m_grid->removeView(last);
+        }
+    }
+
+    std::string m_statusText;
+};
+
 class HomeActivity : public brls::Activity
 {
 public:
@@ -2828,6 +3031,20 @@ private:
         row->setDefaultFocusedIndex(0);
         m_continueBox->setFocusable(false);
         m_continueBox->setDefaultFocusedIndex(0);
+        if (m_continueItems.size() >= 24)
+        {
+            row->addView(make_home_load_more_card([] {
+                brls::Application::pushActivity(
+                    new ContinueCatalogActivity(),
+                    brls::TransitionAnimation::NONE);
+            }));
+        }
+
+        const size_t visibleCount = std::min<size_t>(24, m_continueItems.size());
+        const float contentWidth =
+            static_cast<float>((visibleCount + (m_continueItems.size() >= 24 ? 1 : 0)) * 192.0f);
+        row->setWidth(std::max(1160.0f, contentWidth));
+
         m_continueBox->addView(row);
 
         if (m_continueTitle)
@@ -2882,4 +3099,6 @@ static void tick_live_ui_activities()
         g_trendingCatalogActivity->tick();
     if (g_airingCatalogActivity)
         g_airingCatalogActivity->tick();
+    if (g_continueCatalogActivity)
+        g_continueCatalogActivity->tick();
 }
