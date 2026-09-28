@@ -2290,22 +2290,15 @@ public:
         m_statusLabel->setMargins(0, 6, 0, 0);
         m_content->addView(m_statusLabel);
 
-        m_pairButton = new brls::Label();
-        m_pairButton->setText("LINK ANILIST FROM PHONE");
-        m_pairButton->setFontSize(16.0f);
-        m_pairButton->setTextColor(nvgRGB(97, 207, 226));
-        m_pairButton->setMargins(0, 8, 0, 0);
-        m_pairButton->setFocusable(true);
-        m_pairButton->registerAction(
-            "Pair AniList account",
-            brls::BUTTON_A,
-            [](brls::View*) {
-                brls::Application::pushActivity(
-                    new PairingActivity(),
-                    brls::TransitionAnimation::NONE);
-                return true;
-            });
-        m_content->addView(m_pairButton);
+        brls::Label* libraryHint = new brls::Label();
+        libraryHint->setText(
+            "AniList library is managed from Settings. "
+            "Local library lists are planned for a future update.");
+        libraryHint->setFontSize(14.0f);
+        libraryHint->setTextColor(nvgRGB(135, 147, 166));
+        libraryHint->setMargins(0, 8, 0, 0);
+        libraryHint->setFocusable(false);
+        m_content->addView(libraryHint);
 
         m_scroll = new brls::ScrollingFrame();
         m_scroll->setWidthPercentage(100.0f);
@@ -2329,14 +2322,12 @@ public:
 
         m_token = load_anilist_token();
 
-        if (m_pairButton)
-            m_pairButton->setFocusable(m_token.empty());
-
         if (m_token.empty())
         {
             m_loaded = true;
             m_loadStatus =
-                "No AniList account is linked. Pair with the Saikou phone app above.";
+                "No AniList account is linked. Use Settings to connect AniList. "
+                "Local library lists are planned for a future update.";
 
             if (m_statusLabel)
                 m_statusLabel->setText(m_loadStatus);
@@ -2393,7 +2384,6 @@ private:
 
     brls::Box* m_content = nullptr;
     brls::Label* m_statusLabel = nullptr;
-    brls::Label* m_pairButton = nullptr;
     brls::ScrollingFrame* m_scroll = nullptr;
     brls::Box* m_sections = nullptr;
 
