@@ -1734,15 +1734,31 @@ public:
         brls::Label* back = new brls::Label();
         back->setText("Press B to return to Settings.");
         back->setFontSize(14.0f);
-        back->setFocusable(true);
+        back->setFocusable(false);
         back->setTextColor(nvgRGB(135, 147, 166));
         back->setMargins(0, 24, 0, 0);
         root->addView(back);
+
+        m_focusSink = new brls::Padding();
+        m_focusSink->setWidth(1.0f);
+        m_focusSink->setHeight(1.0f);
+        m_focusSink->setFocusable(true);
+        m_focusSink->registerAction(
+            "Pairing no-op",
+            brls::BUTTON_A,
+            [](brls::View*) {
+                return true;
+            });
+        root->addView(m_focusSink);
+
         return root;
     }
 
     void onContentAvailable() override
     {
+        if (m_focusSink)
+            brls::Application::giveFocus(m_focusSink);
+
         if (!m_listener.joinable())
             m_listener = std::thread([this] { listen_for_phone(); });
     }
@@ -1767,6 +1783,7 @@ private:
     std::string m_lastDisplayed;
     std::string m_address;
     brls::Label* m_statusLabel = nullptr;
+    brls::Padding* m_focusSink = nullptr;
 
     void set_status(const std::string& message)
     {
