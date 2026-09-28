@@ -1292,8 +1292,7 @@ public:
         m_loading = false;
         m_resultReady.store(false, std::memory_order_release);
 
-        if (m_page == 1)
-            render_results();
+        render_results();
 
         if (m_status)
         {
@@ -1301,7 +1300,7 @@ public:
             text += " — " + std::to_string(m_resultItems.size()) +
                 " results";
             if (m_hasMore)
-                text += " — select LOAD MORE for another 30.";
+                text += " — select LOAD MORE for another 24.";
             m_status->setText(text);
         }
 
@@ -1414,7 +1413,7 @@ private:
         m_worker = std::thread([this, page] {
             std::string status;
             std::vector<SaikouAnime> newItems =
-                fetch_anilist_media(m_pendingQuery, 30, status, page);
+                fetch_anilist_media(m_pendingQuery, 24, status, page);
 
             for (SaikouAnime& anime : newItems)
             {
@@ -1423,7 +1422,7 @@ private:
                     anime.posterPath.clear();
             }
 
-            if (newItems.size() < 30)
+            if (newItems.size() < 24)
                 m_hasMore = false;
 
             m_resultItems.insert(m_resultItems.end(), newItems.begin(), newItems.end());
