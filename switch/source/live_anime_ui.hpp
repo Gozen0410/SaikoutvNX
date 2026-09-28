@@ -2451,6 +2451,24 @@ public:
 
     void tick()
     {
+        // HScrollingFrame can receive focus itself when entering the section.
+        // Once its dynamic card row exists, explicitly hand focus to the first
+        // actual anime card so A/LEFT/RIGHT operate on the card, not the frame.
+        if (m_continueScroll && !m_continueItems.empty())
+        {
+            brls::View* currentFocus = brls::Application::getCurrentFocus();
+            if (currentFocus == m_continueScroll && !m_continueBox->getChildren().empty())
+            {
+                brls::View* row = m_continueBox->getChildren().front();
+                if (row)
+                {
+                    brls::View* card = row->getDefaultFocus();
+                    if (card)
+                        brls::Application::giveFocus(card);
+                }
+            }
+        }
+
         if (!m_attached && m_ready.load(std::memory_order_acquire))
         {
             if (m_loader.joinable())
@@ -2467,11 +2485,6 @@ public:
             m_attached = true;
             log_stage("ANILIST HOME CARDS ATTACHED");
         }
-
-        // Reassert the known-good #191 behavior after Continue Watching has
-        // actually been rendered. The latest Trending changes must not leave
-        // the HScrollingFrame owning focus instead of an anime card.
-        focus_continue_card();
 
         if (m_airingReady.load(std::memory_order_acquire))
         {
@@ -2585,40 +2598,9 @@ private:
             m_continueSubtitle->setText(m_continueMessage);
     }
 
-    void focus_continue_card()
-    {
-        if (!m_continueScroll || !m_continueBox || m_continueItems.empty() ||
-            m_continueBox->getChildren().empty())
-            return;
-
-        brls::View* currentFocus = brls::Application::getCurrentFocus();
-        bool insideContinue = false;
-
-        for (brls::View* view = currentFocus; view; view = view->getParent())
-        {
-            if (view == m_continueBox || view == m_continueScroll)
-            {
-                insideContinue = true;
-                break;
-            }
-        }
-
-        if (!insideContinue)
-            return;
-
-        brls::View* row = m_continueBox->getChildren().front();
-        if (!row)
-            return;
-
-        brls::View* card = row->getDefaultFocus();
-        if (card && currentFocus != card)
-            brls::Application::giveFocus(card);
-    }
-
     void update_continue_card()
     {
         render_continue_cards();
-        focus_continue_card();
     }
 
     void connect_navigation(const char* id, const char* name, std::function<void()> callback)
