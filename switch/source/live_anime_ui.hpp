@@ -1701,8 +1701,8 @@ public:
 
         brls::Label* instructions = new brls::Label();
         instructions->setText(
-            "Your requested flow is a 3-digit code from Saikou on your phone, entered on the Switch. "
-            "That code exchange is not implemented in this build yet. Keep both devices on the same Wi-Fi.");
+            "Open Saikou on your phone, choose Settings / TV Login, and enter the "
+            "3-digit code shown below. Keep both devices on the same Wi-Fi.");
         instructions->setFontSize(17.0f);
         instructions->setLineHeight(24.0f);
         instructions->setFocusable(false);
@@ -1713,10 +1713,21 @@ public:
         m_address = get_switch_local_ip();
         brls::Label* address = new brls::Label();
         if (m_address.empty())
-            address->setText("Switch IP unavailable. Connect it to Wi-Fi.\nPhone-code pairing is not available yet.");
+        {
+            address->setText(
+                "Switch IP unavailable. Connect it to Wi-Fi.");
+        }
         else
-            address->setText("Switch IP: " + m_address +
-                "\nThe 3-digit phone-code exchange is not available in this build.");
+        {
+            const size_t dot = m_address.find_last_of('.');
+            const std::string hostCode =
+                dot == std::string::npos
+                    ? m_address
+                    : m_address.substr(dot + 1);
+
+            address->setText(
+                "TV LOGIN CODE\n" + hostCode);
+        }
         address->setFontSize(25.0f);
         address->setFocusable(false);
         address->setTextColor(nvgRGB(97, 207, 226));
