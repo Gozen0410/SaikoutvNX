@@ -3581,7 +3581,7 @@ private:
                         continue;
 
                     ++completed;
-                    brls::sync([this, lifetime, generation,
+                    brls::sync([this, lifetime, generation, totalJobs,
                         image = job.image, path = job.path, completed] {
                         if (!lifetime->load(std::memory_order_acquire))
                             return;
