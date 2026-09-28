@@ -158,43 +158,86 @@ static bool http_request(const std::string& url, const std::string* postBody,
     if (!ensure_network_ready() || !ensure_curl_ready())
         return false;
 
-    CURL* curl = curl_easy_init();
-    if (!curl)
+    static constexpr int kMaxAttempts = 2;
+
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt)
+    {
+        response.clear();
+
+        CURL* curl = curl_easy_init();
+        if (!curl)
+            return false;
+
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Accept: application/json");
+        if (postBody)
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+        if (bearerToken && !bearerToken->empty())
+        {
+            const std::string authHeader = "Authorization: Bearer " + *bearerToken;
+            headers = curl_slist_append(headers, authHeader.c_str());
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouTV-NX/0.3");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, append_http_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+        if (postBody)
+        {
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postBody->c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(postBody->size()));
+        }
+
+        const CURLcode requestResult = curl_easy_perform(curl);
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+        const bool success =
+            requestResult == CURLE_OK && httpCode >= 200 && httpCode < 300;
+
+        const bool retryableHttp =
+            httpCode == 429 || httpCode >= 500;
+
+        const bool retryableCurl =
+            requestResult == CURLE_OPERATION_TIMEDOUT ||
+            requestResult == CURLE_COULDNT_CONNECT ||
+            requestResult == CURLE_COULDNT_RESOLVE_HOST ||
+            requestResult == CURLE_RECV_ERROR ||
+            requestResult == CURLE_SEND_ERROR ||
+            requestResult == CURLE_GOT_NOTHING;
+
+        char marker[256];
+        std::snprintf(marker, sizeof(marker),
+            "HTTP ATTEMPT %d/%d result=%d http=%ld bytes=%zu retry=%d url=%.120s",
+            attempt, kMaxAttempts, static_cast<int>(requestResult), httpCode,
+            response.size(),
+            (!success && attempt < kMaxAttempts && (retryableHttp || retryableCurl)) ? 1 : 0,
+            url.c_str());
+        log_stage(marker);
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+
+        if (success)
+            return true;
+
+        if (attempt < kMaxAttempts && (retryableHttp || retryableCurl))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            continue;
+        }
+
         return false;
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Accept: application/json");
-    if (postBody)
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-    if (bearerToken && !bearerToken->empty())
-    {
-        const std::string authHeader = "Authorization: Bearer " + *bearerToken;
-        headers = curl_slist_append(headers, authHeader.c_str());
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouTV-NX/0.3");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, append_http_data);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-    if (postBody)
-    {
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postBody->c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(postBody->size()));
-    }
-
-    const CURLcode requestResult = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    return requestResult == CURLE_OK && httpCode >= 200 && httpCode < 300;
+    return false;
 }
 
 static void append_utf8(std::string& out, unsigned int cp)
