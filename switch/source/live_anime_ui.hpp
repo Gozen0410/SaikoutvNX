@@ -2796,7 +2796,7 @@ public:
         if (m_worker.joinable())
             m_worker.join();
 
-        render_grid();
+        append_loaded_items();
         m_ready.store(false, std::memory_order_release);
         m_loading = false;
 
@@ -2822,6 +2822,9 @@ private:
     bool m_loading = false;
     bool m_hasMore = true;
     int m_page = 0;
+    size_t m_renderedCount = 0;
+    brls::Box* m_loadMoreRow = nullptr;
+    brls::Box* m_loadMoreCard = nullptr;
 
     void start_load(int page)
     {
@@ -2855,46 +2858,85 @@ private:
         });
     }
 
-    void render_grid()
+    void append_loaded_items()
     {
         if (!m_grid)
             return;
 
-        clear_box(m_grid);
+        if (m_loadMoreRow)
+        {
+            brls::View* currentFocus = brls::Application::getCurrentFocus();
+            if (currentFocus == m_loadMoreCard)
+            {
+                const auto& rows = m_grid->getChildren();
+                if (rows.size() >= 2)
+                {
+                    brls::Box* lastDataRow =
+                        dynamic_cast<brls::Box*>(rows[rows.size() - 2]);
+                    if (lastDataRow && !lastDataRow->getChildren().empty())
+                        brls::Application::giveFocus(lastDataRow->getChildren().back());
+                }
+            }
+
+            m_grid->removeView(m_loadMoreRow);
+            m_loadMoreRow = nullptr;
+            m_loadMoreCard = nullptr;
+        }
 
         constexpr size_t perRow = 6;
         constexpr float rowWidth = 1160.0f;
         constexpr float rowHeight = 252.0f;
 
-        size_t index = 0;
+        size_t index = m_renderedCount;
+
         while (index < m_items.size())
         {
-            brls::Box* row = new brls::Box(brls::Axis::ROW);
-            row->setWidth(rowWidth);
-            row->setHeight(rowHeight);
-            row->setAlignItems(brls::AlignItems::FLEX_START);
+            brls::Box* row = nullptr;
 
-            const size_t stop = std::min(m_items.size(), index + perRow);
-            for (; index < stop; ++index)
+            if (!m_grid->getChildren().empty())
+            {
+                brls::View* last = m_grid->getChildren().back();
+                row = dynamic_cast<brls::Box*>(last);
+                if (row && row->getChildren().size() >= perRow)
+                    row = nullptr;
+            }
+
+            if (!row)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_grid->addView(row);
+            }
+
+            while (index < m_items.size() &&
+                   row->getChildren().size() < perRow)
+            {
                 row->addView(make_anime_card(m_items[index]));
-
-            m_grid->addView(row);
+                ++index;
+            }
         }
+
+        m_renderedCount = m_items.size();
 
         if (m_hasMore)
         {
-            brls::Box* moreRow = new brls::Box(brls::Axis::ROW);
-            moreRow->setWidth(rowWidth);
-            moreRow->setHeight(rowHeight);
-            moreRow->setAlignItems(brls::AlignItems::FLEX_START);
-            moreRow->addView(make_home_load_more_card([this] {
+            m_loadMoreRow = new brls::Box(brls::Axis::ROW);
+            m_loadMoreRow->setWidth(rowWidth);
+            m_loadMoreRow->setHeight(rowHeight);
+            m_loadMoreRow->setAlignItems(brls::AlignItems::FLEX_START);
+
+            m_loadMoreCard = make_home_load_more_card([this] {
                 start_load(m_page + 1);
-            }));
-            m_grid->addView(moreRow);
+            });
+
+            m_loadMoreRow->addView(m_loadMoreCard);
+            m_grid->addView(m_loadMoreRow);
         }
 
         const size_t dataRows =
-            (m_items.size() + perRow - 1) / perRow;
+            (m_renderedCount + perRow - 1) / perRow;
         const size_t totalRows = dataRows + (m_hasMore ? 1 : 0);
         m_grid->setHeight(
             std::max(600.0f, static_cast<float>(totalRows) * rowHeight + 20.0f));
