@@ -3563,10 +3563,11 @@ private:
         const uint64_t generation =
             m_coverGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
         const auto lifetime = m_coverLifetime;
-        perf_log_count("HOME PROGRESSIVE COVERS START", jobs.size());
+        const size_t totalJobs = jobs.size();
+        perf_log_count("HOME PROGRESSIVE COVERS START", totalJobs);
 
         m_coverLoader = std::thread(
-            [this, lifetime, generation, jobs] {
+            [this, lifetime, generation, jobs, totalJobs] {
                 size_t completed = 0;
 
                 for (const CoverTarget& job : jobs)
@@ -3601,7 +3602,7 @@ private:
                         char marker[160];
                         std::snprintf(marker, sizeof(marker),
                             "HOME PROGRESSIVE COVER READY %zu/%zu",
-                            completed, jobs.size());
+                            completed, totalJobs);
                         perf_log(marker);
                     });
                 }
