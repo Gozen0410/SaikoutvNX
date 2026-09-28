@@ -1914,6 +1914,10 @@ static constexpr const char* kLibraryStatusNames[6] = {
     "WATCHING", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REWATCHING"
 };
 
+static constexpr const char* kLibraryStatusValues[6] = {
+    "CURRENT", "PLANNING", "COMPLETED", "PAUSED", "DROPPED", "REPEATING"
+};
+
 static std::vector<AniListEntry> filter_library_entries(
     const std::vector<AniListEntry>& entries, size_t category)
 {
@@ -1923,7 +1927,7 @@ static std::vector<AniListEntry> filter_library_entries(
 
     for (const AniListEntry& entry : entries)
     {
-        if (entry.listStatus == kLibraryStatusNames[category])
+        if (entry.listStatus == kLibraryStatusValues[category])
         {
             AniListEntry item = entry;
             item.anime.posterPath = cached_cover_path(item.anime.id);
