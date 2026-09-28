@@ -2875,7 +2875,9 @@ public:
     brls::View* createContentView() override
     {
         log_stage("ACTIVITY OPEN: Settings");
-        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+
+        brls::Box* root =
+            new brls::Box(brls::Axis::COLUMN);
         register_page_back_action(root);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
@@ -2885,15 +2887,24 @@ public:
         brls::Label* heading = new brls::Label();
         heading->setText("SETTINGS");
         heading->setFontSize(28.0f);
+        heading->setFocusable(false);
         root->addView(heading);
+
+        brls::Label* accountHeading = new brls::Label();
+        accountHeading->setText("ANILIST ACCOUNT");
+        accountHeading->setFontSize(19.0f);
+        accountHeading->setMargins(0, 16, 0, 5);
+        accountHeading->setTextColor(nvgRGB(220, 228, 240));
+        accountHeading->setFocusable(false);
+        root->addView(accountHeading);
 
         brls::Label* account = new brls::Label();
         account->setText(load_anilist_token().empty()
-            ? "No AniList account linked."
+            ? "Not linked to AniList."
             : "AniList account token is saved on this Switch.");
-        account->setFontSize(16.0f);
+        account->setFontSize(15.0f);
         account->setTextColor(nvgRGB(174, 184, 200));
-        account->setMargins(0, 7, 0, 0);
+        account->setFocusable(false);
         root->addView(account);
 
         brls::Label* pair = new brls::Label();
@@ -2902,31 +2913,178 @@ public:
             : "PAIR AGAIN / CHANGE ANILIST ACCOUNT");
         pair->setFontSize(17.0f);
         pair->setTextColor(nvgRGB(97, 207, 226));
-        pair->setMargins(0, 12, 0, 0);
+        pair->setMargins(0, 10, 0, 0);
         pair->setFocusable(true);
-        pair->registerAction("Link AniList account", brls::BUTTON_A, [](brls::View*) {
-            log_stage("SETTINGS OPEN PAIRING");
-            brls::Application::pushActivity(new PairingActivity(), brls::TransitionAnimation::NONE);
-            return true;
-        });
+        pair->registerAction(
+            "Link AniList account",
+            brls::BUTTON_A,
+            [](brls::View*) {
+                log_stage("SETTINGS OPEN PAIRING");
+                brls::Application::pushActivity(
+                    new PairingActivity(),
+                    brls::TransitionAnimation::NONE);
+                return true;
+            });
         root->addView(pair);
 
         brls::Label* sourceHeading = new brls::Label();
         sourceHeading->setText("EPISODE SOURCES");
         sourceHeading->setFontSize(20.0f);
-        sourceHeading->setMargins(0, 18, 0, 10);
+        sourceHeading->setMargins(0, 18, 0, 6);
+        sourceHeading->setTextColor(nvgRGB(220, 228, 240));
+        sourceHeading->setFocusable(false);
         root->addView(sourceHeading);
+
+        root->addView(make_preferred_source());
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
             root->addView(make_toggle(i));
+
+        brls::Label* sourceHint = new brls::Label();
+        sourceHint->setText(
+            "Enable the sources you want available for episode lookup.");
+        sourceHint->setFontSize(13.0f);
+        sourceHint->setTextColor(nvgRGB(135, 147, 166));
+        sourceHint->setMargins(0, 8, 0, 0);
+        sourceHint->setFocusable(false);
+        root->addView(sourceHint);
+
+        brls::Label* aboutHeading = new brls::Label();
+        aboutHeading->setText("APP");
+        aboutHeading->setFontSize(19.0f);
+        aboutHeading->setMargins(0, 14, 0, 5);
+        aboutHeading->setTextColor(nvgRGB(220, 228, 240));
+        aboutHeading->setFocusable(false);
+        root->addView(aboutHeading);
+
+        m_about = new brls::Label();
+        m_about->setText(
+            "SaikouTV NX  |  Live AniList data  |  "
+            "Episode sources are saved to the Switch.");
+        m_about->setFontSize(13.0f);
+        m_about->setTextColor(nvgRGB(135, 147, 166));
+        m_about->setFocusable(false);
+        root->addView(m_about);
+
         log_stage("SETTINGS VIEW BUILT");
         return root;
     }
 
 private:
+    brls::Label* m_selectedSource = nullptr;
+    brls::Label* m_about = nullptr;
+
+    size_t enabled_source_count() const
+    {
+        size_t count = 0;
+        for (size_t i = 0; i < kApiSourceCount; ++i)
+        {
+            if (g_providerEnabled[i])
+                ++count;
+        }
+        return count;
+    }
+
+    void refresh_selected_source()
+    {
+        if (!m_selectedSource)
+            return;
+
+        std::string text = "PREFERRED: ";
+
+        if (g_selectedApiSource >= 0 &&
+            static_cast<size_t>(g_selectedApiSource) < kApiSourceCount &&
+            g_providerEnabled[g_selectedApiSource])
+        {
+            text += kApiSources[g_selectedApiSource].name;
+        }
+        else
+        {
+            text += "NONE";
+        }
+
+        text +=
+            "    (" +
+            std::to_string(enabled_source_count()) +
+            "/" +
+            std::to_string(kApiSourceCount) +
+            " enabled)";
+
+        m_selectedSource->setText(text);
+    }
+
+    brls::Box* make_preferred_source()
+    {
+        brls::Box* row =
+            new brls::Box(brls::Axis::ROW);
+        row->setWidthPercentage(100.0f);
+        row->setHeight(46.0f);
+        row->setMargins(0, 4, 0, 0);
+        row->setPadding(10.0f);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setBackgroundColor(nvgRGB(27, 34, 48));
+        row->setBorderColor(nvgRGB(48, 57, 74));
+        row->setBorderThickness(1.0f);
+        row->setCornerRadius(6.0f);
+        row->setFocusable(true);
+
+        m_selectedSource = new brls::Label();
+        m_selectedSource->setFontSize(16.0f);
+        m_selectedSource->setTextColor(nvgRGB(214, 222, 235));
+        m_selectedSource->setFocusable(false);
+        row->addView(m_selectedSource);
+        refresh_selected_source();
+
+        row->registerAction(
+            "Cycle preferred episode source",
+            brls::BUTTON_A,
+            [this](brls::View*) {
+                if (enabled_source_count() == 0)
+                {
+                    refresh_selected_source();
+                    return true;
+                }
+
+                const int start = g_selectedApiSource;
+
+                for (size_t offset = 1;
+                     offset <= kApiSourceCount;
+                     ++offset)
+                {
+                    const size_t candidate =
+                        (static_cast<size_t>(
+                            start < 0 ? 0 : start) +
+                         offset) %
+                        kApiSourceCount;
+
+                    if (g_providerEnabled[candidate])
+                    {
+                        g_selectedApiSource =
+                            static_cast<int>(candidate);
+                        save_source_settings();
+                        refresh_selected_source();
+
+                        char marker[128];
+                        std::snprintf(
+                            marker,
+                            sizeof(marker),
+                            "SETTINGS PREFERRED SOURCE id=%d",
+                            g_selectedApiSource);
+                        log_stage(marker);
+                        break;
+                    }
+                }
+
+                return true;
+            });
+
+        return row;
+    }
+
     brls::Box* make_toggle(size_t index)
     {
-        brls::Box* toggle = new brls::Box(brls::Axis::ROW);
+        brls::Box* toggle =
+            new brls::Box(brls::Axis::ROW);
         toggle->setWidthPercentage(100.0f);
         toggle->setHeight(46.0f);
         toggle->setMargins(0, 9, 0, 0);
@@ -2942,21 +3100,52 @@ private:
         label->setText(toggle_text(index));
         label->setFontSize(17.0f);
         label->setTextColor(nvgRGB(214, 222, 235));
+        label->setFocusable(false);
         toggle->addView(label);
-        toggle->registerAction("Toggle source API", brls::BUTTON_A, [this, label, index](brls::View*) {
-            log_stage("SETTINGS SOURCE TOGGLE");
-            g_providerEnabled[index] = !g_providerEnabled[index];
-            save_source_settings();
-            label->setText(toggle_text(index));
-            return true;
-        });
+
+        toggle->registerAction(
+            "Toggle source API",
+            brls::BUTTON_A,
+            [this, label, index](brls::View*) {
+                log_stage("SETTINGS SOURCE TOGGLE");
+
+                g_providerEnabled[index] =
+                    !g_providerEnabled[index];
+
+                if (!g_providerEnabled[index] &&
+                    g_selectedApiSource ==
+                        static_cast<int>(index))
+                {
+                    g_selectedApiSource = -1;
+
+                    for (size_t candidate = 0;
+                         candidate < kApiSourceCount;
+                         ++candidate)
+                    {
+                        if (g_providerEnabled[candidate])
+                        {
+                            g_selectedApiSource =
+                                static_cast<int>(candidate);
+                            break;
+                        }
+                    }
+                }
+
+                save_source_settings();
+                label->setText(toggle_text(index));
+                refresh_selected_source();
+                return true;
+            });
+
         return toggle;
     }
 
     std::string toggle_text(size_t index) const
     {
-        return std::string(g_providerEnabled[index] ? "[ON]  " : "[OFF] ") +
-            kApiSources[index].name + "    (press A to toggle)";
+        return std::string(
+            g_providerEnabled[index] ? "[ON]  " : "[OFF] ") +
+            kApiSources[index].name +
+            "    (press A to toggle)";
     }
 };
 
