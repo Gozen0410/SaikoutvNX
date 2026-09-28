@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -28,6 +29,29 @@
 #include <unistd.h>
 
 static void log_stage(const char* stage);
+
+static const auto g_perfStart = std::chrono::steady_clock::now();
+
+static long long perf_elapsed_ms()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - g_perfStart).count();
+}
+
+static void perf_log(const char* stage)
+{
+    char marker[224];
+    std::snprintf(marker, sizeof(marker), "PERF %lldms | %s", perf_elapsed_ms(), stage);
+    log_stage(marker);
+}
+
+static void perf_log_count(const char* stage, size_t count)
+{
+    char marker[224];
+    std::snprintf(marker, sizeof(marker), "PERF %lldms | %s count=%zu",
+        perf_elapsed_ms(), stage, count);
+    log_stage(marker);
+}
 
 struct SaikouAnime
 {
@@ -1293,6 +1317,7 @@ public:
         m_resultReady.store(false, std::memory_order_release);
 
         render_results();
+        perf_log_count("SEARCH RESULTS RENDERED", m_resultItems.size());
 
         if (m_status)
         {
@@ -1411,16 +1436,26 @@ private:
                 : "Loading more search results...");
 
         m_worker = std::thread([this, page] {
+            char stage[96];
+            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d API START", page);
+            perf_log(stage);
+
             std::string status;
             std::vector<SaikouAnime> newItems =
                 fetch_anilist_media(m_pendingQuery, 24, status, page);
+            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d METADATA RECEIVED", page);
+            perf_log_count(stage, newItems.size());
 
+            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d COVERS START", page);
+            perf_log(stage);
             for (SaikouAnime& anime : newItems)
             {
                 anime.posterPath = cached_cover_path(anime.id);
                 if (!download_image(anime.coverUrl, anime.posterPath))
                     anime.posterPath.clear();
             }
+            std::snprintf(stage, sizeof(stage), "SEARCH PAGE %d COVERS DONE", page);
+            perf_log(stage);
 
             if (newItems.size() < 24)
                 m_hasMore = false;
@@ -2982,44 +3017,66 @@ public:
         if (!m_loader.joinable())
         {
             m_loader = std::thread([this] {
+                perf_log("HOME TRENDING API START");
                 m_items = fetch_anilist_media("", 24, m_loadStatus);
+                perf_log_count("HOME TRENDING METADATA RECEIVED", m_items.size());
+
+                perf_log("HOME TRENDING COVERS START");
                 for (SaikouAnime& anime : m_items)
                 {
                     anime.posterPath = cached_cover_path(anime.id);
                     if (!download_image(anime.coverUrl, anime.posterPath))
                         anime.posterPath.clear();
                 }
+                perf_log("HOME TRENDING COVERS DONE");
+
                 const std::string token = load_anilist_token();
                 if (!token.empty())
                 {
+                    perf_log("HOME CONTINUE API START");
                     m_continueItems = fetch_anilist_continue_watching(token, m_continueMessage);
+                    perf_log_count("HOME CONTINUE METADATA RECEIVED", m_continueItems.size());
+
+                    perf_log("HOME CONTINUE COVERS START");
                     for (ContinueWatchItem& item : m_continueItems)
                     {
                         if (!download_image(item.anime.coverUrl, item.anime.posterPath))
                             item.anime.posterPath.clear();
                     }
+                    perf_log("HOME CONTINUE COVERS DONE");
                 }
                 else
                 {
+                    perf_log("HOME CONTINUE LOCAL START");
                     m_continueItems = load_local_continue_watching();
                     m_continueMessage = m_continueItems.empty()
                         ? "Watch something and it will appear here."
                         : "Local watch progress on this Switch.";
+                    perf_log_count("HOME CONTINUE LOCAL READY", m_continueItems.size());
                 }
+
                 m_ready.store(true, std::memory_order_release);
+                perf_log("HOME PRIMARY DATA READY");
             });
         }
         if (m_latestCards && !m_airingLoader.joinable())
         {
             m_airingLoader = std::thread([this] {
+                perf_log("HOME AIRING API START");
                 m_airingItems = fetch_currently_airing_media(24, m_airingStatus);
+                perf_log_count("HOME AIRING METADATA RECEIVED", m_airingItems.size());
+
+                perf_log("HOME AIRING COVERS START");
                 for (SaikouAnime& anime : m_airingItems)
                 {
                     anime.posterPath = cached_cover_path(anime.id);
                     if (!download_image(anime.coverUrl, anime.posterPath))
                         anime.posterPath.clear();
                 }
+                perf_log("HOME AIRING COVERS DONE");
+
                 m_airingReady.store(true, std::memory_order_release);
+                perf_log("HOME AIRING DATA READY");
             });
         }
     }
@@ -3053,7 +3110,10 @@ public:
                     new TrendingCatalogActivity(),
                     brls::TransitionAnimation::NONE);
             });
+            perf_log_count("HOME TRENDING CARDS RENDERED", m_items.size());
+
             render_continue_cards();
+            perf_log_count("HOME CONTINUE CARDS RENDERED", m_continueItems.size());
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
 
@@ -3070,6 +3130,7 @@ public:
                     new AiringCatalogActivity(),
                     brls::TransitionAnimation::NONE);
             });
+            perf_log_count("HOME AIRING CARDS RENDERED", m_airingItems.size());
             m_airingReady.store(false, std::memory_order_release);
         }
 
