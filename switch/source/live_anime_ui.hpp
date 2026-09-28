@@ -2989,7 +2989,7 @@ public:
         sourceHint->setFocusable(false);
 
         brls::Padding* sourceHintGap = new brls::Padding();
-        sourceHintGap->setHeight(2.0f);
+        sourceHintGap->setHeight(10.0f);
         content->addView(sourceHintGap);
         content->addView(sourceHint);
 
@@ -3064,7 +3064,7 @@ private:
             new brls::Box(brls::Axis::ROW);
         row->setWidthPercentage(100.0f);
         row->setHeight(46.0f);
-        row->setMargins(0, 0, 0, 10);
+        row->setMargins(0, 0, 0, 14);
         row->setPadding(10.0f);
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setBackgroundColor(nvgRGB(27, 34, 48));
@@ -3132,7 +3132,7 @@ private:
             new brls::Box(brls::Axis::ROW);
         toggle->setWidthPercentage(100.0f);
         toggle->setHeight(46.0f);
-        toggle->setMargins(0, 0, 0, 10);
+        toggle->setMargins(0, 0, 0, 14);
         toggle->setPadding(10.0f);
         toggle->setAlignItems(brls::AlignItems::CENTER);
         toggle->setBackgroundColor(nvgRGB(27, 34, 48));
