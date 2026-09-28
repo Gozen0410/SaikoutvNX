@@ -2286,9 +2286,6 @@ private:
             std::max(600.0f,
                 static_cast<float>(totalRows) * rowHeight + 20.0f));
 
-        if (m_cardScroll)
-            m_cardScroll->setContentOffsetY(0.0f, 0.0f);
-
         std::string status = m_loadStatus;
 
         if (!m_username.empty())
