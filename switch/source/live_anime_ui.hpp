@@ -1734,7 +1734,7 @@ public:
         brls::Label* back = new brls::Label();
         back->setText("Press B to return to Settings.");
         back->setFontSize(14.0f);
-        back->setFocusable(true);
+        back->setFocusable(false);
         back->setTextColor(nvgRGB(135, 147, 166));
         back->setMargins(0, 24, 0, 0);
         root->addView(back);
