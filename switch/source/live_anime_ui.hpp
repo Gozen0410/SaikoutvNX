@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
