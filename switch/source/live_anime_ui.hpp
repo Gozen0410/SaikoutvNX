@@ -505,6 +505,39 @@ static std::vector<SaikouAnime> fetch_anilist_media(const std::string& search, i
     return result;
 }
 
+static std::vector<SaikouAnime> fetch_anilist_trending_page(
+    int page, int pageSize, std::string& status)
+{
+    static const std::string endpoint = "https://graphql.anilist.co";
+    const std::string query =
+        "query ($page: Int, $perPage: Int) { "
+        "Page(page: $page, perPage: $perPage) { "
+        "media(type: ANIME, sort: TRENDING_DESC) { "
+        "id title { english romaji native userPreferred } "
+        "coverImage { large extraLarge } bannerImage averageScore format status episodes "
+        "description(asHtml: false) "
+        "} } }";
+
+    const std::string body = "{\"query\":" + json_quote(query) +
+        ",\"variables\":{\"page\":" + std::to_string(page) +
+        ",\"perPage\":" + std::to_string(pageSize) + "}}";
+    std::string response;
+    if (!http_request(endpoint, &body, response, 12))
+    {
+        status = "AniList could not be reached. Check the Switch internet connection.";
+        log_stage("ANILIST TRENDING PAGE REQUEST FAILED");
+        return {};
+    }
+
+    std::vector<SaikouAnime> result = parse_anilist_media(response);
+    char marker[128];
+    std::snprintf(marker, sizeof(marker), "ANILIST TRENDING PAGE %d FOUND %zu ITEMS", page, result.size());
+    log_stage(marker);
+    status = result.empty() ? "AniList returned no more trending anime." : "Live AniList trending data";
+    return result;
+}
+
+
 static std::vector<SaikouAnime> fetch_currently_airing_media(int pageSize, std::string& status)
 {
     static const std::string endpoint = "https://graphql.anilist.co";
@@ -2089,6 +2122,240 @@ static bool save_local_continue_watching(const ContinueWatchItem& item)
 }
 
 
+static brls::Box* make_home_load_more_card(const char* label, std::function<void()> callback)
+{
+    brls::Box* card = new brls::Box(brls::Axis::COLUMN);
+    card->setWidth(184.0f);
+    card->setHeight(244.0f);
+    card->setPadding(10.0f);
+    card->setMargins(3, 7, 3, 0);
+    card->setBackgroundColor(nvgRGB(27, 34, 48));
+    card->setBorderColor(nvgRGB(48, 57, 74));
+    card->setBorderThickness(1.0f);
+    card->setCornerRadius(9.0f);
+    card->setFocusable(true);
+    card->setJustifyContent(brls::JustifyContent::CENTER);
+    card->setAlignItems(brls::AlignItems::CENTER);
+
+    brls::Label* title = new brls::Label();
+    title->setText(label);
+    title->setFontSize(16.0f);
+    title->setTextColor(nvgRGB(244, 246, 250));
+    title->setSingleLine(false);
+    title->setFocusable(false);
+    card->addView(title);
+
+    card->registerAction(label, brls::BUTTON_A, [callback](brls::View*) {
+        callback();
+        return true;
+    });
+    return card;
+}
+
+static void render_home_trending_cards(
+    brls::Box* container,
+    const std::vector<SaikouAnime>& items,
+    std::function<void()> loadMoreCallback)
+{
+    if (!container) return;
+    clear_box(container);
+
+    const float itemWidth = 192.0f;
+    const float contentWidth =
+        std::max(1160.0f, static_cast<float>(items.size() + 1) * itemWidth);
+    container->setWidth(contentWidth);
+
+    brls::Box* row = new brls::Box(brls::Axis::ROW);
+    row->setWidth(contentWidth);
+    row->setHeight(252.0f);
+    row->setAlignItems(brls::AlignItems::FLEX_START);
+
+    for (const SaikouAnime& anime : items)
+        row->addView(make_anime_card(anime));
+
+    row->addView(make_home_load_more_card("LOAD MORE", std::move(loadMoreCallback)));
+    container->addView(row);
+}
+
+class TrendingCatalogActivity : public brls::Activity
+{
+public:
+    TrendingCatalogActivity()
+    {
+    }
+
+    ~TrendingCatalogActivity() override
+    {
+        if (m_worker.joinable())
+            m_worker.join();
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
+        root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
+        root->setPadding(30.0f);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("TRENDING ANIME");
+        heading->setFontSize(30.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        m_status = new brls::Label();
+        m_status->setText("Loading more trending anime...");
+        m_status->setFontSize(14.0f);
+        m_status->setTextColor(nvgRGB(174, 184, 200));
+        m_status->setMargins(0, 7, 0, 0);
+        root->addView(m_status);
+
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(600.0f);
+        m_scroll->setMargins(0, 12, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
+        m_grid = new brls::Box(brls::Axis::COLUMN);
+        m_grid->setWidth(1160.0f);
+        m_grid->setHeight(900.0f);
+        m_scroll->setContentView(m_grid);
+        root->addView(m_scroll);
+
+        return root;
+    }
+
+    void onContentAvailable() override
+    {
+        start_load(2);
+    }
+
+    void tick()
+    {
+        if (m_ready.load(std::memory_order_acquire))
+        {
+            if (m_worker.joinable())
+                m_worker.join();
+
+            append_items(m_renderedCount, m_items.size());
+            m_renderedCount = m_items.size();
+            m_ready.store(false, std::memory_order_release);
+            m_loading = false;
+
+            if (m_status)
+            {
+                m_status->setText("Loaded " + std::to_string(m_items.size()) +
+                    " trending anime — scroll down for more.");
+            }
+        }
+
+        maybe_load_more();
+    }
+
+private:
+    brls::Label* m_status = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
+    brls::Box* m_grid = nullptr;
+    std::vector<SaikouAnime> m_items;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    bool m_loading = false;
+    bool m_hasMore = true;
+    size_t m_renderedCount = 0;
+    int m_page = 1;
+    std::string m_statusText;
+
+    void start_load(int page)
+    {
+        if (m_loading || !m_hasMore)
+            return;
+
+        if (m_worker.joinable())
+            m_worker.join();
+
+        m_page = page;
+        m_loading = true;
+        m_ready.store(false, std::memory_order_release);
+
+        m_worker = std::thread([this, page] {
+            std::string status;
+            std::vector<SaikouAnime> newItems =
+                fetch_anilist_trending_page(page, 24, status);
+
+            for (SaikouAnime& anime : newItems)
+            {
+                anime.posterPath = cached_cover_path(anime.id);
+                if (!download_image(anime.coverUrl, anime.posterPath))
+                    anime.posterPath.clear();
+            }
+
+            if (newItems.size() < 24)
+                m_hasMore = false;
+
+            m_items.insert(m_items.end(), newItems.begin(), newItems.end());
+            m_statusText = status;
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
+
+    void append_items(size_t startIndex, size_t endIndex)
+    {
+        if (!m_grid || startIndex >= endIndex)
+            return;
+
+        constexpr size_t perRow = 6;
+        constexpr float rowWidth = 1160.0f;
+        constexpr float rowHeight = 252.0f;
+
+        size_t index = startIndex;
+        while (index < endIndex)
+        {
+            brls::Box* row = nullptr;
+
+            if (!m_grid->getChildren().empty())
+            {
+                row = dynamic_cast<brls::Box*>(m_grid->getChildren().back());
+                if (!row || row->getChildren().size() >= perRow)
+                    row = nullptr;
+            }
+
+            if (!row)
+            {
+                row = new brls::Box(brls::Axis::ROW);
+                row->setWidth(rowWidth);
+                row->setHeight(rowHeight);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                m_grid->addView(row);
+            }
+
+            while (index < endIndex && row->getChildren().size() < perRow)
+            {
+                row->addView(make_anime_card(m_items[index]));
+                ++index;
+            }
+        }
+
+        const size_t rowCount = (m_items.size() + perRow - 1) / perRow;
+        m_grid->setHeight(
+            std::max(600.0f, static_cast<float>(rowCount) * rowHeight + 20.0f));
+    }
+
+    void maybe_load_more()
+    {
+        if (m_loading || !m_hasMore || !m_scroll || !m_grid || m_items.empty())
+            return;
+
+        const float remaining =
+            m_grid->getHeight() -
+            (m_scroll->getContentOffsetY() + m_scroll->getHeight());
+
+        if (remaining <= 300.0f)
+            start_load(m_page + 1);
+    }
+};
+
 class HomeActivity : public brls::Activity
 {
 public:
@@ -2210,7 +2477,11 @@ public:
         {
             if (m_loader.joinable())
                 m_loader.join();
-            render_horizontal_anime_cards(m_cards, m_items);
+            render_home_trending_cards(m_cards, m_items, [] {
+                brls::Application::pushActivity(
+                    new TrendingCatalogActivity(),
+                    brls::TransitionAnimation::NONE);
+            });
             render_continue_cards();
             if (m_status)
                 m_status->setText(m_loadStatus + " — select a poster for details.");
