@@ -2429,14 +2429,17 @@ private:
         m_categoryScrolls.clear();
 
         std::vector<AniListEntry> continueEntries;
+        size_t currentCount = 0;
 
         for (const AniListEntry& entry : m_entries)
         {
-            if (entry.listStatus == "CURRENT" &&
-                continueEntries.size() < kHomeBatchSize)
-            {
+            if (entry.listStatus != "CURRENT")
+                continue;
+
+            ++currentCount;
+
+            if (continueEntries.size() < kHomeBatchSize)
                 continueEntries.push_back(entry);
-            }
         }
 
         if (!continueEntries.empty())
@@ -2479,8 +2482,12 @@ private:
             brls::Box* continueRow =
                 new brls::Box(brls::Axis::ROW);
 
+            const bool hasContinueMore =
+                currentCount > kHomeBatchSize;
+
             const size_t totalCards =
-                continueEntries.size();
+                continueEntries.size() +
+                (hasContinueMore ? 1 : 0);
 
             continueRow->setWidth(
                 std::max(
@@ -2526,6 +2533,18 @@ private:
                         coverPath
                     });
                 }
+            }
+
+            if (hasContinueMore)
+            {
+                continueRow->addView(
+                    make_home_load_more_card([this] {
+                        brls::Application::pushActivity(
+                            new LibraryCategoryActivity(
+                                0,
+                                m_entries),
+                            brls::TransitionAnimation::NONE);
+                    }));
             }
 
             continueRow->setDefaultFocusedIndex(0);
