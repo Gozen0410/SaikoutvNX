@@ -2910,9 +2910,9 @@ public:
         brls::Box* pair =
             new brls::Box(brls::Axis::ROW);
         pair->setWidthPercentage(100.0f);
-        pair->setHeight(56.0f);
-        pair->setMargins(0, 14, 0, 18);
-        pair->setPadding(10.0f);
+        pair->setHeight(72.0f);
+        pair->setMargins(0, 18, 0, 22);
+        pair->setPadding(14.0f);
         pair->setAlignItems(brls::AlignItems::CENTER);
         pair->setBackgroundColor(nvgRGB(27, 34, 48));
         pair->setBorderColor(nvgRGB(48, 57, 74));
