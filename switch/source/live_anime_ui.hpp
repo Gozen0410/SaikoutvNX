@@ -69,6 +69,7 @@ struct SaikouAnime
 };
 
 static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true };
+static std::string g_providerBaseUrl[kApiSourceCount] = {};
 static int g_selectedApiSource = 0;
 static bool g_restoreGlobalQuitAfterKeyboard = false;
 static std::atomic<unsigned int> g_anilistAccountRevision{ 0 };
@@ -872,7 +873,7 @@ static void initialize_source_settings()
 
     FILE* file = std::fopen(kSettingsPath, "r");
     if (!file) return;
-    char line[128];
+    char line[512];
     while (std::fgets(line, sizeof(line), file))
     {
         std::string value(line);
@@ -881,6 +882,14 @@ static void initialize_source_settings()
             const std::string key = std::string(kApiSources[i].slug) + "=";
             if (value.find(key) == 0)
                 g_providerEnabled[i] = value[key.size()] == '1';
+            const std::string urlKey = std::string(kApiSources[i].slug) + "_url=";
+            if (value.find(urlKey) == 0)
+            {
+                g_providerBaseUrl[i] = value.substr(urlKey.size());
+                while (!g_providerBaseUrl[i].empty() &&
+                    (g_providerBaseUrl[i].back() == '\n' || g_providerBaseUrl[i].back() == '\r'))
+                    g_providerBaseUrl[i].pop_back();
+            }
         }
         if (value.find("selected=") == 0)
             g_selectedApiSource = std::atoi(value.c_str() + 9);
@@ -897,9 +906,283 @@ static void save_source_settings()
     FILE* file = std::fopen(kSettingsPath, "w");
     if (!file) return;
     for (size_t i = 0; i < kApiSourceCount; ++i)
+    {
         std::fprintf(file, "%s=%d\n", kApiSources[i].slug, g_providerEnabled[i] ? 1 : 0);
+        std::fprintf(file, "%s_url=%s\n", kApiSources[i].slug, g_providerBaseUrl[i].c_str());
+    }
     std::fprintf(file, "selected=%d\n", g_selectedApiSource);
     std::fclose(file);
+}
+
+
+struct ProviderEpisode
+{
+    int number = 0;
+    std::string title;
+    std::string id;
+};
+
+static std::string encode_url_component(const std::string& input)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    std::string output;
+    for (unsigned char c : input)
+    {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+            output.push_back(static_cast<char>(c));
+        else
+        {
+            output.push_back('%');
+            output.push_back(hex[c >> 4]);
+            output.push_back(hex[c & 15]);
+        }
+    }
+    return output;
+}
+
+static std::string trim_api_base(std::string base)
+{
+    while (!base.empty() && (base.back() == '/' || base.back() == ' '))
+        base.pop_back();
+    while (!base.empty() && base.front() == ' ')
+        base.erase(base.begin());
+    return base;
+}
+
+static std::string first_array(const std::string& json,
+    const std::vector<std::string>& fields)
+{
+    for (const std::string& field : fields)
+    {
+        std::string value = json_array_field(json, field);
+        if (!value.empty())
+            return value;
+    }
+    return {};
+}
+
+static std::string first_string(const std::string& json,
+    const std::vector<std::string>& fields)
+{
+    for (const std::string& field : fields)
+    {
+        std::string value = json_string_field(json, field);
+        if (!value.empty())
+            return value;
+    }
+    return {};
+}
+
+static std::vector<ProviderEpisode> parse_provider_episode_array(const std::string& array)
+{
+    std::vector<ProviderEpisode> episodes;
+    for (const std::string& object : json_object_array(array))
+    {
+        ProviderEpisode item;
+        item.number = json_int_field(object, "episodeNumber");
+        if (item.number <= 0) item.number = json_int_field(object, "episode");
+        if (item.number <= 0) item.number = json_int_field(object, "number");
+        if (item.number <= 0) item.number = json_int_field(object, "order");
+        item.id = first_string(object, { "epId", "episodeId", "id", "session", "slug", "url" });
+        if (item.id.empty())
+        {
+            const int numericId = json_int_field(object, "id");
+            if (numericId > 0) item.id = std::to_string(numericId);
+        }
+        item.title = first_string(object, { "title", "name", "alternativeTitle" });
+        if (item.number <= 0 && item.title.empty())
+            continue;
+        if (item.title.empty())
+            item.title = "Episode " + std::to_string(item.number);
+        episodes.push_back(std::move(item));
+    }
+    std::stable_sort(episodes.begin(), episodes.end(),
+        [](const ProviderEpisode& a, const ProviderEpisode& b) {
+            if (a.number == 0) return false;
+            if (b.number == 0) return true;
+            return a.number < b.number;
+        });
+    return episodes;
+}
+
+static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& json)
+{
+    // Miruro returns a provider-keyed response. Walk its JSON objects and keep
+    // objects that carry an episode number plus a provider episode identifier.
+    std::vector<ProviderEpisode> episodes;
+    for (size_t p = 0; p < json.size(); ++p)
+    {
+        if (json[p] != '{') continue;
+        size_t end = p + 1;
+        int depth = 1;
+        bool quoted = false, escaped = false;
+        for (; end < json.size() && depth > 0; ++end)
+        {
+            const char c = json[end];
+            if (quoted)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') quoted = false;
+                continue;
+            }
+            if (c == '"') quoted = true;
+            else if (c == '{') ++depth;
+            else if (c == '}') --depth;
+        }
+        if (depth != 0) break;
+        const std::string object = json.substr(p, end - p);
+        ProviderEpisode item;
+        item.number = json_int_field(object, "episodeNumber");
+        if (item.number <= 0) item.number = json_int_field(object, "number");
+        if (item.number <= 0) item.number = json_int_field(object, "episode");
+        item.id = first_string(object, { "episodeId", "id", "slug", "url" });
+        if (item.id.empty())
+        {
+            const int numericId = json_int_field(object, "id");
+            if (numericId > 0) item.id = std::to_string(numericId);
+        }
+        item.title = first_string(object, { "title", "name" });
+        if (item.number > 0 && !item.id.empty())
+        {
+            if (item.title.empty()) item.title = "Episode " + std::to_string(item.number);
+            episodes.push_back(std::move(item));
+        }
+    }
+    std::stable_sort(episodes.begin(), episodes.end(),
+        [](const ProviderEpisode& a, const ProviderEpisode& b) { return a.number < b.number; });
+    episodes.erase(std::unique(episodes.begin(), episodes.end(),
+        [](const ProviderEpisode& a, const ProviderEpisode& b) {
+            return a.number == b.number && a.id == b.id;
+        }), episodes.end());
+    return episodes;
+}
+
+static std::vector<ProviderEpisode> fetch_provider_episodes(
+    const SaikouAnime& anime, int sourceId, std::string& status)
+{
+    if (sourceId < 0 || static_cast<size_t>(sourceId) >= kApiSourceCount)
+    {
+        status = "Invalid episode provider.";
+        return {};
+    }
+    if (static_cast<ApiSourceId>(sourceId) == ApiSourceId::Gogoanime)
+    {
+        status = "This GoGoAnime fork only exposes a latest-episodes feed; it has no anime search/details episode route yet.";
+        return {};
+    }
+    const std::string base = trim_api_base(g_providerBaseUrl[sourceId]);
+    if (base.empty())
+    {
+        status = std::string(kApiSources[sourceId].name) +
+            " API URL is missing. Add its deployed API address in Settings.";
+        return {};
+    }
+
+    auto get = [](const std::string& url, std::string& body) {
+        return http_request(url, nullptr, body, 20);
+    };
+    std::string response;
+    std::vector<ProviderEpisode> episodes;
+
+    switch (static_cast<ApiSourceId>(sourceId))
+    {
+        case ApiSourceId::Miruro:
+        {
+            if (anime.id <= 0 || !get(base + "/episodes/" + std::to_string(anime.id), response))
+                break;
+            episodes = parse_miruro_episodes(response);
+            break;
+        }
+        case ApiSourceId::AnimePahe:
+        {
+            if (!get(base + "/api/search?q=" + encode_url_component(anime.title), response))
+                break;
+            const std::string results = first_array(response, { "data", "results", "search" });
+            std::string session;
+            for (const std::string& object : json_object_array(results))
+            {
+                session = first_string(object, { "session", "id", "animeSession" });
+                if (!session.empty()) break;
+            }
+            if (session.empty()) break;
+
+            int page = 1;
+            for (; page <= 100; ++page)
+            {
+                std::string releases;
+                const std::string url = base + "/api/" + encode_url_component(session) +
+                    "/releases?sort=episode_asc&page=" + std::to_string(page);
+                if (!get(url, releases)) break;
+                const std::string data = first_array(releases, { "data", "episodes", "results" });
+                std::vector<ProviderEpisode> batch = parse_provider_episode_array(data);
+                episodes.insert(episodes.end(), batch.begin(), batch.end());
+                const int lastPage = json_int_field(json_object_field(releases, "paginationInfo"), "lastPage");
+                if (lastPage <= 0 || page >= lastPage || batch.empty()) break;
+            }
+            break;
+        }
+        case ApiSourceId::Aniwatch:
+        {
+            if (!get(base + "/api/search/" + encode_url_component(anime.title) + "/1", response))
+                break;
+            const std::string results = first_array(response, { "searchYour", "results", "response", "data" });
+            std::string animeId;
+            for (const std::string& object : json_object_array(results))
+            {
+                animeId = first_string(object, { "idanime", "id", "animeId" });
+                if (animeId.empty())
+                {
+                    const int numericId = json_int_field(object, "idanime");
+                    if (numericId > 0) animeId = std::to_string(numericId);
+                }
+                if (!animeId.empty()) break;
+            }
+            if (animeId.empty()) break;
+            if (!get(base + "/api/episode/" + encode_url_component(animeId), response))
+                break;
+            episodes = parse_provider_episode_array(
+                first_array(response, { "episodetown", "episodes", "response", "data" }));
+            break;
+        }
+        case ApiSourceId::HiAnime:
+        {
+            if (!get(base + "/api/v2/search?keyword=" + encode_url_component(anime.title), response))
+                break;
+            const std::string results = first_array(response, { "response", "results", "data" });
+            std::string animeId;
+            for (const std::string& object : json_object_array(results))
+            {
+                animeId = first_string(object, { "id", "animeId", "aniId" });
+                if (!animeId.empty()) break;
+            }
+            if (animeId.empty()) break;
+            if (!get(base + "/api/v2/episodes/" + encode_url_component(animeId), response))
+                break;
+            episodes = parse_provider_episode_array(
+                first_array(response, { "response", "episodes", "data" }));
+            break;
+        }
+        case ApiSourceId::Gogoanime:
+            return {};
+    }
+
+    if (!episodes.empty())
+    {
+        status = std::string(kApiSources[sourceId].name) + " returned " +
+            std::to_string(episodes.size()) + " episodes.";
+        char marker[160];
+        std::snprintf(marker, sizeof(marker), "EPISODE PROVIDER READY source=%d count=%zu",
+            sourceId, episodes.size());
+        log_stage(marker);
+        return episodes;
+    }
+
+    status = std::string(kApiSources[sourceId].name) +
+        " did not return an episode list. Check the API URL, provider response, and network.";
+    log_stage("EPISODE PROVIDER REQUEST EMPTY OR FAILED");
+    return {};
 }
 
 static void clear_box(brls::Box* box)
@@ -984,8 +1267,8 @@ private:
 class EpisodeStreamActivity : public brls::Activity
 {
 public:
-    EpisodeStreamActivity(SaikouAnime anime, int episode, int sourceId)
-        : m_anime(std::move(anime)), m_episode(episode), m_sourceId(sourceId)
+    EpisodeStreamActivity(SaikouAnime anime, ProviderEpisode episode, int sourceId)
+        : m_anime(std::move(anime)), m_providerEpisode(std::move(episode)), m_sourceId(sourceId)
     {
     }
 
@@ -999,7 +1282,7 @@ public:
         root->setBackgroundColor(nvgRGB(16, 20, 29));
 
         char title[96];
-        std::snprintf(title, sizeof(title), "EPISODE %d", m_episode);
+        std::snprintf(title, sizeof(title), "%s", m_providerEpisode.title.c_str());
         brls::Label* heading = new brls::Label();
         heading->setText(title);
         heading->setFontSize(28.0f);
@@ -1058,8 +1341,9 @@ public:
         root->addView(streamStatus);
 
         m_sourceStatus = new brls::Label();
-        m_sourceStatus->setText("Selected " + std::string(api_source_name(m_sourceId)) +
-            ". Waiting for provider-returned stream options.");
+        m_sourceStatus->setText("Episode ID " + m_providerEpisode.id +
+            " came from " + std::string(api_source_name(m_sourceId)) +
+            ". Stream extraction is the next provider step.");
         m_sourceStatus->setFontSize(15.0f);
         m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
         m_sourceStatus->setMargins(0, 14, 0, 0);
@@ -1079,7 +1363,7 @@ public:
 
 private:
     SaikouAnime m_anime;
-    int m_episode = 0;
+    ProviderEpisode m_providerEpisode;
     int m_sourceId = 0;
     std::string m_quality = "Auto";
     brls::Label* m_sourceStatus = nullptr;
@@ -1108,12 +1392,23 @@ private:
     }
 };
 
+class EpisodeListActivity;
+static EpisodeListActivity* g_episodeListActivity = nullptr;
+
 class EpisodeListActivity : public brls::Activity
 {
 public:
     EpisodeListActivity(SaikouAnime anime, int sourceId)
         : m_anime(std::move(anime)), m_sourceId(sourceId)
     {
+        g_episodeListActivity = this;
+    }
+
+    ~EpisodeListActivity() override
+    {
+        m_lifetime->store(false, std::memory_order_release);
+        if (m_worker.joinable()) m_worker.join();
+        if (g_episodeListActivity == this) g_episodeListActivity = nullptr;
     }
 
     brls::View* createContentView() override
@@ -1145,38 +1440,107 @@ public:
         m_status->setFocusable(false);
         m_content->addView(m_status);
 
-        m_status->setText("Episodes must come from the selected streaming provider. That scraper is not connected yet.");
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setGrow(1.0f);
+        m_scroll->setMargins(0, 10, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+        m_rows = new brls::Box(brls::Axis::COLUMN);
+        m_rows->setWidth(1160.0f);
+        m_rows->setHeight(600.0f);
+        m_scroll->setContentView(m_rows);
+        m_content->addView(m_scroll);
 
-        m_emptyAction = new brls::Box(brls::Axis::COLUMN);
-        m_emptyAction->setDimensions(270.0f, 56.0f);
-        m_emptyAction->setMargins(0, 18, 0, 0);
-        m_emptyAction->setPadding(12.0f);
-        m_emptyAction->setBackgroundColor(nvgRGB(27, 34, 48));
-        m_emptyAction->setBorderColor(nvgRGB(48, 57, 74));
-        m_emptyAction->setBorderThickness(1.0f);
-        m_emptyAction->setCornerRadius(8.0f);
-        m_emptyAction->setFocusable(true);
-        brls::Label* backLabel = new brls::Label();
-        backLabel->setText("BACK TO ANIME");
-        backLabel->setFontSize(16.0f);
-        backLabel->setTextColor(nvgRGB(244, 246, 250));
-        backLabel->setFocusable(false);
-        m_emptyAction->addView(backLabel);
-        m_emptyAction->registerAction("Return to anime", brls::BUTTON_A, [](brls::View*) {
-            brls::sync([] {
-                brls::Application::popActivity(brls::TransitionAnimation::NONE, [] {}, true);
-            });
-            return true;
-        });
-        m_content->addView(m_emptyAction);
-
+        m_status->setText("Loading episode list from " + std::string(api_source_name(m_sourceId)) + "...");
+        start_load();
         return m_content;
     }
 
-    void onContentAvailable() override
+    void tick()
     {
-        if (m_emptyAction)
-            brls::Application::giveFocus(m_emptyAction);
+        if (!m_ready.load(std::memory_order_acquire))
+            return;
+        if (m_worker.joinable()) m_worker.join();
+        m_ready.store(false, std::memory_order_release);
+        if (m_status) m_status->setText(m_statusText);
+
+        clear_box(m_rows);
+        if (m_episodes.empty())
+        {
+            brls::Label* empty = new brls::Label();
+            empty->setText(m_statusText);
+            empty->setFontSize(15.0f);
+            empty->setTextColor(nvgRGB(174, 184, 200));
+            empty->setMargins(0, 8, 0, 0);
+            empty->setFocusable(false);
+            m_rows->addView(empty);
+            return;
+        }
+
+        for (size_t begin = 0; begin < m_episodes.size(); begin += 50)
+        {
+            const size_t finish = std::min(begin + 50, m_episodes.size());
+            const size_t batch = finish - begin;
+            brls::Label* rowHeading = new brls::Label();
+            rowHeading->setText("EPISODES " + std::to_string(begin + 1) +
+                "–" + std::to_string(finish));
+            rowHeading->setFontSize(17.0f);
+            rowHeading->setTextColor(nvgRGB(220, 228, 240));
+            rowHeading->setFocusable(false);
+            rowHeading->setMargins(0, begin == 0 ? 0 : 12, 0, 0);
+            m_rows->addView(rowHeading);
+
+            brls::HScrollingFrame* horizontal = new brls::HScrollingFrame();
+            horizontal->setWidth(1160.0f);
+            horizontal->setHeight(70.0f);
+            horizontal->setMargins(0, 5, 0, 0);
+            horizontal->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+            brls::Box* row = new brls::Box(brls::Axis::ROW);
+            row->setWidth(std::max(1160.0f, static_cast<float>(batch) * 190.0f));
+            row->setHeight(62.0f);
+            for (size_t i = begin; i < finish; ++i)
+            {
+                const ProviderEpisode& episode = m_episodes[i];
+                brls::Box* tile = new brls::Box(brls::Axis::COLUMN);
+                tile->setWidth(182.0f);
+                tile->setHeight(54.0f);
+                tile->setPadding(8.0f);
+                tile->setMargins(0, 0, 8, 0);
+                tile->setBackgroundColor(nvgRGB(27, 34, 48));
+                tile->setBorderColor(nvgRGB(48, 57, 74));
+                tile->setBorderThickness(1.0f);
+                tile->setCornerRadius(7.0f);
+                tile->setFocusable(true);
+                brls::Label* label = new brls::Label();
+                label->setText(episode.title);
+                label->setFontSize(15.0f);
+                label->setTextColor(nvgRGB(244, 246, 250));
+                label->setFocusable(false);
+                tile->addView(label);
+                tile->registerAction("Select provider episode", brls::BUTTON_A,
+                    [this, episode](brls::View*) {
+                        log_stage("EPISODE SELECTED FROM PROVIDER");
+                        brls::Application::pushActivity(
+                            new EpisodeStreamActivity(m_anime, episode, m_sourceId),
+                            brls::TransitionAnimation::NONE);
+                        return true;
+                    });
+                row->addView(tile);
+            }
+            row->setDefaultFocusedIndex(0);
+            horizontal->setContentView(row);
+            m_rows->addView(horizontal);
+        }
+
+        m_rows->setHeight(std::max(600.0f,
+            static_cast<float>((m_episodes.size() + 49) / 50) * 112.0f + 80.0f));
+        if (m_episodes.size() && m_rows)
+        {
+            m_rows->setDefaultFocusedIndex(1);
+            if (m_rows->getDefaultFocus())
+                brls::Application::giveFocus(m_rows->getDefaultFocus());
+        }
+        perf_log_count("PROVIDER EPISODE TILES RENDERED", m_episodes.size());
     }
 
 private:
@@ -1184,7 +1548,29 @@ private:
     int m_sourceId = 0;
     brls::Box* m_content = nullptr;
     brls::Label* m_status = nullptr;
-    brls::Box* m_emptyAction = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
+    brls::Box* m_rows = nullptr;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    std::shared_ptr<std::atomic<bool>> m_lifetime =
+        std::make_shared<std::atomic<bool>>(true);
+    std::vector<ProviderEpisode> m_episodes;
+    std::string m_statusText;
+
+    void start_load()
+    {
+        if (m_worker.joinable()) m_worker.join();
+        m_ready.store(false, std::memory_order_release);
+        const auto lifetime = m_lifetime;
+        const SaikouAnime anime = m_anime;
+        const int sourceId = m_sourceId;
+        m_worker = std::thread([this, lifetime, anime, sourceId] {
+            perf_log("PROVIDER EPISODE REQUEST START");
+            m_episodes = fetch_provider_episodes(anime, sourceId, m_statusText);
+            if (!lifetime->load(std::memory_order_acquire)) return;
+            m_ready.store(true, std::memory_order_release);
+        });
+    }
 };
 
 class AnimeDetailsActivity;
@@ -3311,6 +3697,7 @@ public:
         for (size_t i = 0; i < kApiSourceCount; ++i)
         {
             content->addView(make_toggle(i));
+            content->addView(make_endpoint_editor(i));
 
             if (i + 1 < kApiSourceCount)
             {
@@ -3522,6 +3909,62 @@ private:
             });
 
         return toggle;
+    }
+
+    brls::Box* make_endpoint_editor(size_t index)
+    {
+        brls::Box* row = new brls::Box(brls::Axis::ROW);
+        row->setWidthPercentage(100.0f);
+        row->setHeight(42.0f);
+        row->setMargins(0, 4, 0, 0);
+        row->setPadding(8.0f);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setBackgroundColor(nvgRGB(22, 28, 40));
+        row->setBorderColor(nvgRGB(48, 57, 74));
+        row->setBorderThickness(1.0f);
+        row->setCornerRadius(6.0f);
+        row->setFocusable(true);
+
+        brls::Label* label = new brls::Label();
+        const std::string endpoint = g_providerBaseUrl[index].empty()
+            ? "API URL not set — press A to configure"
+            : "API: " + g_providerBaseUrl[index];
+        label->setText(endpoint);
+        label->setFontSize(13.0f);
+        label->setTextColor(nvgRGB(174, 184, 200));
+        label->setFocusable(false);
+        row->addView(label);
+
+        row->registerAction("Set scraper API URL", brls::BUTTON_A,
+            [this, index, label](brls::View*) {
+                SwkbdConfig keyboard{};
+                if (R_FAILED(swkbdCreate(&keyboard, 0)))
+                    return true;
+                swkbdConfigMakePresetDefault(&keyboard);
+                swkbdConfigSetHeaderText(&keyboard, "Scraper API address");
+                swkbdConfigSetGuideText(&keyboard, "Enter the deployed API base URL");
+                swkbdConfigSetSubText(&keyboard, "Use the service root, without a trailing slash");
+                swkbdConfigSetOkButtonText(&keyboard, "Save");
+                if (!g_providerBaseUrl[index].empty())
+                    swkbdConfigSetInitialText(&keyboard, g_providerBaseUrl[index].c_str());
+
+                brls::Application::setGlobalQuit(false);
+                g_restoreGlobalQuitAfterKeyboard = true;
+                char input[384] = {};
+                const Result result = swkbdShow(&keyboard, input, sizeof(input));
+                swkbdClose(&keyboard);
+                if (R_SUCCEEDED(result))
+                {
+                    g_providerBaseUrl[index] = trim_api_base(input);
+                    save_source_settings();
+                    label->setText(g_providerBaseUrl[index].empty()
+                        ? "API URL not set — press A to configure"
+                        : "API: " + g_providerBaseUrl[index]);
+                    log_stage("SETTINGS SCRAPER API URL SAVED");
+                }
+                return true;
+            });
+        return row;
     }
 
     std::string toggle_text(size_t index) const
@@ -5380,6 +5823,8 @@ static void tick_live_ui_activities()
         log_stage("SEARCH KEYBOARD GLOBAL QUIT RESTORED");
     }
 
+    if (g_episodeListActivity)
+        g_episodeListActivity->tick();
     if (g_pairingActivity)
         g_pairingActivity->tick();
     if (g_libraryActivity)
