@@ -60,6 +60,10 @@ struct SaikouAnime
     int score = 0;
     int episodes = 0;
     std::string title;
+    std::string englishTitle;
+    std::string romajiTitle;
+    std::string nativeTitle;
+    std::string userPreferredTitle;
     std::string coverUrl;
     std::string bannerUrl;
     std::string description;
@@ -494,10 +498,14 @@ static SaikouAnime parse_anime_object(const std::string& object)
     anime.bannerUrl = json_string_field(object, "bannerImage");
 
     const std::string title = json_object_field(object, "title");
-    anime.title = json_string_field(title, "english");
-    if (anime.title.empty()) anime.title = json_string_field(title, "userPreferred");
-    if (anime.title.empty()) anime.title = json_string_field(title, "romaji");
-    if (anime.title.empty()) anime.title = json_string_field(title, "native");
+    anime.englishTitle = json_string_field(title, "english");
+    anime.romajiTitle = json_string_field(title, "romaji");
+    anime.nativeTitle = json_string_field(title, "native");
+    anime.userPreferredTitle = json_string_field(title, "userPreferred");
+    anime.title = anime.englishTitle;
+    if (anime.title.empty()) anime.title = anime.userPreferredTitle;
+    if (anime.title.empty()) anime.title = anime.romajiTitle;
+    if (anime.title.empty()) anime.title = anime.nativeTitle;
 
     const std::string cover = json_object_field(object, "coverImage");
     anime.coverUrl = json_string_field(cover, "extraLarge");
@@ -1074,6 +1082,29 @@ static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& jso
     return episodes;
 }
 
+static std::vector<std::string> provider_search_titles(const SaikouAnime& anime)
+{
+    // Match the Android title lookup behavior: search the English name first,
+    // then retry with the AniList romaji/Japanese names if that search has no hit.
+    const std::string candidates[] = {
+        anime.englishTitle,
+        anime.title,
+        anime.romajiTitle,
+        anime.nativeTitle,
+        anime.userPreferredTitle
+    };
+    std::vector<std::string> titles;
+    for (const std::string& candidate : candidates)
+    {
+        if (candidate.empty()) continue;
+        bool duplicate = false;
+        for (const std::string& existing : titles)
+            if (existing == candidate) duplicate = true;
+        if (!duplicate) titles.push_back(candidate);
+    }
+    return titles;
+}
+
 static std::vector<ProviderEpisode> fetch_provider_episodes(
     const SaikouAnime& anime, int sourceId, std::string& status)
 {
@@ -1135,16 +1166,21 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         }
         case ApiSourceId::AnimePahe:
         {
-            const std::string query = encode_url_component(anime.title);
-            if (!get_any({ "/search?q=" + query, "/api/search?q=" + query }, response))
-                break;
-            std::string results = first_array(response, { "data", "results", "search" });
-            if (results.empty() && !response.empty() && response.front() == '[') results = response;
             std::string session;
-            for (const std::string& object : json_object_array(results))
+            for (const std::string& title : provider_search_titles(anime))
             {
-                session = first_string(object, { "session", "id", "animeSession" });
+                const std::string query = encode_url_component(title);
+                if (!get_any({ "/search?q=" + query, "/api/search?q=" + query }, response))
+                    continue;
+                std::string results = first_array(response, { "data", "results", "search" });
+                if (results.empty() && !response.empty() && response.front() == '[') results = response;
+                for (const std::string& object : json_object_array(results))
+                {
+                    session = first_string(object, { "session", "id", "animeSession" });
+                    if (!session.empty()) break;
+                }
                 if (!session.empty()) break;
+                log_stage("ANIMEPAHE TITLE SEARCH HAD NO MATCH; trying next AniList title");
             }
             if (session.empty()) break;
 
@@ -1172,19 +1208,24 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         }
         case ApiSourceId::Aniwatch:
         {
-            if (!get("/api/search/" + encode_url_component(anime.title) + "/1", response))
-                break;
-            const std::string results = first_array(response, { "searchYour", "results", "response", "data" });
             std::string animeId;
-            for (const std::string& object : json_object_array(results))
+            for (const std::string& title : provider_search_titles(anime))
             {
-                animeId = first_string(object, { "idanime", "id", "animeId" });
-                if (animeId.empty())
+                if (!get("/api/search/" + encode_url_component(title) + "/1", response))
+                    continue;
+                const std::string results = first_array(response, { "searchYour", "results", "response", "data" });
+                for (const std::string& object : json_object_array(results))
                 {
-                    const int numericId = json_int_field(object, "idanime");
-                    if (numericId > 0) animeId = std::to_string(numericId);
+                    animeId = first_string(object, { "idanime", "id", "animeId" });
+                    if (animeId.empty())
+                    {
+                        const int numericId = json_int_field(object, "idanime");
+                        if (numericId > 0) animeId = std::to_string(numericId);
+                    }
+                    if (!animeId.empty()) break;
                 }
                 if (!animeId.empty()) break;
+                log_stage("ANIWATCH TITLE SEARCH HAD NO MATCH; trying next AniList title");
             }
             if (animeId.empty()) break;
             if (!get("/api/episode/" + encode_url_component(animeId), response))
@@ -1195,14 +1236,19 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         }
         case ApiSourceId::HiAnime:
         {
-            if (!get("/api/v2/search?keyword=" + encode_url_component(anime.title), response))
-                break;
-            const std::string results = first_array_in_data(response, { "animes", "response", "results" });
             std::string animeId;
-            for (const std::string& object : json_object_array(results))
+            for (const std::string& title : provider_search_titles(anime))
             {
-                animeId = first_string(object, { "id", "animeId", "aniId" });
+                if (!get("/api/v2/search?keyword=" + encode_url_component(title), response))
+                    continue;
+                const std::string results = first_array_in_data(response, { "animes", "response", "results" });
+                for (const std::string& object : json_object_array(results))
+                {
+                    animeId = first_string(object, { "id", "animeId", "aniId" });
+                    if (!animeId.empty()) break;
+                }
                 if (!animeId.empty()) break;
+                log_stage("HIANIME TITLE SEARCH HAD NO MATCH; trying next AniList title");
             }
             if (animeId.empty()) break;
             if (!get("/api/v2/episodes/" + encode_url_component(animeId), response))
