@@ -1096,16 +1096,23 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         return {};
     }
 
+    bool nonJsonResponseSeen = false;
     auto get = [&](const std::string& path, std::string& body) {
         const std::string roots[] = { base, fallback };
         for (size_t i = 0; i < 2; ++i)
         {
             if (roots[i].empty() || (i == 1 && roots[i] == roots[0])) continue;
-            if (http_request(roots[i] + path, nullptr, body, 20))
+            if (!http_request(roots[i] + path, nullptr, body, 20))
+                continue;
+            const size_t first = body.find_first_not_of(" \\t\\r\\n");
+            if (first == std::string::npos || (body[first] != '{' && body[first] != '['))
             {
-                if (i == 1) log_stage("EPISODE API FALLBACK USED");
-                return true;
+                nonJsonResponseSeen = true;
+                log_stage("EPISODE API RESPONSE IS NOT JSON; trying next base URL");
+                continue;
             }
+            if (i == 1) log_stage("EPISODE API FALLBACK USED");
+            return true;
         }
         return false;
     };
@@ -1219,9 +1226,15 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         return episodes;
     }
 
-    status = std::string(kApiSources[sourceId].name) +
-        " did not return an episode list. Check the API URL, provider response, and network.";
-    log_stage("EPISODE PROVIDER REQUEST EMPTY OR FAILED");
+    if (nonJsonResponseSeen)
+        status = std::string(kApiSources[sourceId].name) +
+            " URL returned a webpage, not scraper JSON. Set the deployed scraper API URL in Settings.";
+    else
+        status = std::string(kApiSources[sourceId].name) +
+            " scraper returned no episodes. Check its API route and network.";
+    log_stage(nonJsonResponseSeen
+        ? "EPISODE PROVIDER REJECTED NON-JSON WEBPAGE"
+        : "EPISODE PROVIDER REQUEST EMPTY OR FAILED");
     return {};
 }
 
@@ -1507,13 +1520,31 @@ public:
         clear_box(m_rows);
         if (m_episodes.empty())
         {
-            brls::Label* empty = new brls::Label();
-            empty->setText(m_statusText);
-            empty->setFontSize(15.0f);
-            empty->setTextColor(nvgRGB(174, 184, 200));
-            empty->setMargins(0, 8, 0, 0);
-            empty->setFocusable(false);
-            m_rows->addView(empty);
+            brls::Box* back = new brls::Box(brls::Axis::ROW);
+            back->setWidth(300.0f);
+            back->setHeight(56.0f);
+            back->setMargins(0, 18, 0, 0);
+            back->setPadding(12.0f);
+            back->setAlignItems(brls::AlignItems::CENTER);
+            back->setBackgroundColor(nvgRGB(27, 34, 48));
+            back->setBorderColor(nvgRGB(48, 57, 74));
+            back->setBorderThickness(1.0f);
+            back->setCornerRadius(8.0f);
+            back->setFocusable(true);
+            brls::Label* backLabel = new brls::Label();
+            backLabel->setText("BACK TO ANIME");
+            backLabel->setFontSize(16.0f);
+            backLabel->setTextColor(nvgRGB(244, 246, 250));
+            backLabel->setFocusable(false);
+            back->addView(backLabel);
+            back->registerAction("Return to anime details", brls::BUTTON_A, [](brls::View*) {
+                brls::sync([] {
+                    brls::Application::popActivity(brls::TransitionAnimation::NONE, [] {}, true);
+                });
+                return true;
+            });
+            m_rows->addView(back);
+            brls::Application::giveFocus(back);
             return;
         }
 
@@ -3733,6 +3764,16 @@ public:
             new brls::Padding();
         preferredSourceGap->setHeight(14.0f);
         content->addView(preferredSourceGap);
+
+        brls::Label* apiUrlHint = new brls::Label();
+        apiUrlHint->setText(
+            "Enter deployed scraper API server URLs here. Anime website domains such as miruro.to or animepahe.ng return web pages, not the JSON this app expects. If self-hosted on your PC, use its LAN IP and port.");
+        apiUrlHint->setFontSize(13.0f);
+        apiUrlHint->setLineHeight(18.0f);
+        apiUrlHint->setTextColor(nvgRGB(174, 184, 200));
+        apiUrlHint->setMargins(0, 8, 0, 12);
+        apiUrlHint->setFocusable(false);
+        content->addView(apiUrlHint);
 
         for (size_t i = 0; i < kApiSourceCount; ++i)
         {
