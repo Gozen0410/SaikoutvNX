@@ -910,6 +910,374 @@ static void clear_box(brls::Box* box)
         box->removeView(child);
 }
 
+
+class PlaybackPreviewActivity : public brls::Activity
+{
+public:
+    PlaybackPreviewActivity(SaikouAnime anime, int episode, int sourceId, std::string quality)
+        : m_anime(std::move(anime)), m_episode(episode), m_sourceId(sourceId), m_quality(std::move(quality))
+    {
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
+        root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
+        root->setPadding(30.0f);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("PLAYER");
+        heading->setFontSize(28.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        char episodeText[64];
+        std::snprintf(episodeText, sizeof(episodeText), "%s - Episode %d",
+            m_anime.title.c_str(), m_episode);
+        brls::Label* details = new brls::Label();
+        details->setText(episodeText);
+        details->setFontSize(17.0f);
+        details->setTextColor(nvgRGB(174, 184, 200));
+        details->setMargins(0, 5, 0, 0);
+        root->addView(details);
+
+        brls::Box* viewport = new brls::Box();
+        viewport->setDimensions(1160.0f, 470.0f);
+        viewport->setMargins(0, 18, 0, 0);
+        viewport->setBackgroundColor(nvgRGB(0, 0, 0));
+        viewport->setFocusable(false);
+        root->addView(viewport);
+
+        const std::string message =
+            "The player surface is ready for " + std::string(api_source_name(m_sourceId)) +
+            " at " + m_quality +
+            ". A stream URL and video playback backend are not connected yet.";
+        brls::Label* status = new brls::Label();
+        status->setText(message);
+        status->setFontSize(16.0f);
+        status->setLineHeight(22.0f);
+        status->setTextColor(nvgRGB(174, 184, 200));
+        status->setMargins(0, 12, 0, 0);
+        status->setFocusable(false);
+        root->addView(status);
+
+        brls::Label* back = new brls::Label();
+        back->setText("Press B to return to episode selection.");
+        back->setFontSize(14.0f);
+        back->setTextColor(nvgRGB(135, 147, 166));
+        back->setMargins(0, 12, 0, 0);
+        back->setFocusable(false);
+        root->addView(back);
+        return root;
+    }
+
+private:
+    SaikouAnime m_anime;
+    int m_episode = 0;
+    int m_sourceId = 0;
+    std::string m_quality;
+};
+
+class EpisodeStreamActivity : public brls::Activity
+{
+public:
+    EpisodeStreamActivity(SaikouAnime anime, int episode, int sourceId)
+        : m_anime(std::move(anime)), m_episode(episode), m_sourceId(sourceId)
+    {
+    }
+
+    brls::View* createContentView() override
+    {
+        brls::Box* root = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(root);
+        root->setWidthPercentage(100.0f);
+        root->setHeightPercentage(100.0f);
+        root->setPadding(30.0f);
+        root->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        char title[96];
+        std::snprintf(title, sizeof(title), "EPISODE %d", m_episode);
+        brls::Label* heading = new brls::Label();
+        heading->setText(title);
+        heading->setFontSize(28.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        root->addView(heading);
+
+        brls::Label* animeTitle = new brls::Label();
+        animeTitle->setText(m_anime.title);
+        animeTitle->setFontSize(18.0f);
+        animeTitle->setTextColor(nvgRGB(174, 184, 200));
+        animeTitle->setMargins(0, 5, 0, 0);
+        root->addView(animeTitle);
+
+        brls::Label* sourceHeading = new brls::Label();
+        sourceHeading->setText("STREAM SOURCE");
+        sourceHeading->setFontSize(18.0f);
+        sourceHeading->setTextColor(nvgRGB(220, 228, 240));
+        sourceHeading->setMargins(0, 20, 0, 0);
+        root->addView(sourceHeading);
+
+        brls::Box* sourceRow = new brls::Box(brls::Axis::ROW);
+        sourceRow->setHeight(54.0f);
+        sourceRow->setMargins(0, 5, 0, 0);
+        for (size_t i = 0; i < kApiSourceCount; ++i)
+        {
+            if (!g_providerEnabled[i]) continue;
+            const ApiSourceInfo& source = kApiSources[i];
+            brls::Box* choice = make_option(source.name, static_cast<int>(source.id) == m_sourceId);
+            choice->registerAction("Select stream source", brls::BUTTON_A,
+                [this, id = static_cast<int>(source.id), name = std::string(source.name)](brls::View*) {
+                    m_sourceId = id;
+                    g_selectedApiSource = id;
+                    save_source_settings();
+                    if (m_sourceStatus)
+                        m_sourceStatus->setText("Selected " + name + ". Provider stream lookup is not connected yet.");
+                    return true;
+                });
+            sourceRow->addView(choice);
+        }
+        root->addView(sourceRow);
+
+        brls::Label* qualityHeading = new brls::Label();
+        qualityHeading->setText("QUALITY");
+        qualityHeading->setFontSize(18.0f);
+        qualityHeading->setTextColor(nvgRGB(220, 228, 240));
+        qualityHeading->setMargins(0, 16, 0, 0);
+        root->addView(qualityHeading);
+
+        brls::Box* qualityRow = new brls::Box(brls::Axis::ROW);
+        qualityRow->setHeight(54.0f);
+        qualityRow->setMargins(0, 5, 0, 0);
+        const char* qualities[] = { "Auto", "1080p", "720p", "480p" };
+        for (const char* quality : qualities)
+        {
+            brls::Box* choice = make_option(quality, m_quality == quality);
+            choice->registerAction("Select quality", brls::BUTTON_A,
+                [this, value = std::string(quality)](brls::View*) {
+                    m_quality = value;
+                    if (m_qualityStatus)
+                        m_qualityStatus->setText("Selected quality: " + m_quality);
+                    return true;
+                });
+            qualityRow->addView(choice);
+        }
+        root->addView(qualityRow);
+
+        m_sourceStatus = new brls::Label();
+        m_sourceStatus->setText("Selected " + std::string(api_source_name(m_sourceId)) +
+            ". Provider stream lookup is not connected yet.");
+        m_sourceStatus->setFontSize(15.0f);
+        m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
+        m_sourceStatus->setMargins(0, 14, 0, 0);
+        m_sourceStatus->setFocusable(false);
+        root->addView(m_sourceStatus);
+
+        m_qualityStatus = new brls::Label();
+        m_qualityStatus->setText("Selected quality: " + m_quality);
+        m_qualityStatus->setFontSize(15.0f);
+        m_qualityStatus->setTextColor(nvgRGB(174, 184, 200));
+        m_qualityStatus->setMargins(0, 4, 0, 0);
+        m_qualityStatus->setFocusable(false);
+        root->addView(m_qualityStatus);
+
+        brls::Box* play = make_option("OPEN PLAYER", false);
+        play->setWidth(250.0f);
+        play->setHeight(58.0f);
+        play->setMargins(0, 20, 0, 0);
+        play->registerAction("Open player", brls::BUTTON_A, [this](brls::View*) {
+            brls::Application::pushActivity(
+                new PlaybackPreviewActivity(m_anime, m_episode, m_sourceId, m_quality),
+                brls::TransitionAnimation::NONE);
+            return true;
+        });
+        root->addView(play);
+
+        return root;
+    }
+
+private:
+    SaikouAnime m_anime;
+    int m_episode = 0;
+    int m_sourceId = 0;
+    std::string m_quality = "Auto";
+    brls::Label* m_sourceStatus = nullptr;
+    brls::Label* m_qualityStatus = nullptr;
+
+    brls::Box* make_option(const std::string& text, bool selected)
+    {
+        brls::Box* option = new brls::Box(brls::Axis::COLUMN);
+        option->setWidth(168.0f);
+        option->setHeight(48.0f);
+        option->setMargins(0, 0, 7, 0);
+        option->setPadding(8.0f);
+        option->setBackgroundColor(selected ? nvgRGB(31, 64, 79) : nvgRGB(27, 34, 48));
+        option->setBorderColor(selected ? nvgRGB(67, 190, 218) : nvgRGB(48, 57, 74));
+        option->setBorderThickness(selected ? 2.0f : 1.0f);
+        option->setCornerRadius(8.0f);
+        option->setFocusable(true);
+
+        brls::Label* label = new brls::Label();
+        label->setText(text);
+        label->setFontSize(15.0f);
+        label->setTextColor(nvgRGB(244, 246, 250));
+        label->setFocusable(false);
+        option->addView(label);
+        return option;
+    }
+};
+
+class EpisodeListActivity : public brls::Activity
+{
+public:
+    EpisodeListActivity(SaikouAnime anime, int sourceId)
+        : m_anime(std::move(anime)), m_sourceId(sourceId)
+    {
+    }
+
+    brls::View* createContentView() override
+    {
+        m_content = new brls::Box(brls::Axis::COLUMN);
+        register_page_back_action(m_content);
+        m_content->setWidthPercentage(100.0f);
+        m_content->setHeightPercentage(100.0f);
+        m_content->setPadding(30.0f);
+        m_content->setBackgroundColor(nvgRGB(16, 20, 29));
+
+        brls::Label* heading = new brls::Label();
+        heading->setText("EPISODES");
+        heading->setFontSize(28.0f);
+        heading->setTextColor(nvgRGB(244, 246, 250));
+        m_content->addView(heading);
+
+        brls::Label* animeTitle = new brls::Label();
+        animeTitle->setText(m_anime.title);
+        animeTitle->setFontSize(17.0f);
+        animeTitle->setTextColor(nvgRGB(174, 184, 200));
+        animeTitle->setMargins(0, 4, 0, 0);
+        m_content->addView(animeTitle);
+
+        m_status = new brls::Label();
+        m_status->setFontSize(14.0f);
+        m_status->setTextColor(nvgRGB(135, 147, 166));
+        m_status->setMargins(0, 8, 0, 0);
+        m_status->setFocusable(false);
+        m_content->addView(m_status);
+
+        m_scroll = new brls::ScrollingFrame();
+        m_scroll->setWidthPercentage(100.0f);
+        m_scroll->setHeight(555.0f);
+        m_scroll->setMargins(0, 10, 0, 0);
+        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
+        m_rows = new brls::Box(brls::Axis::COLUMN);
+        m_rows->setWidth(1160.0f);
+        m_scroll->addView(m_rows);
+        m_content->addView(m_scroll);
+
+        const int totalEpisodes = m_anime.episodes;
+        if (totalEpisodes <= 0)
+        {
+            m_status->setText("AniList has no episode count for this title. Provider episode lookup is not connected yet.");
+            return m_content;
+        }
+
+        m_status->setText(std::to_string(totalEpisodes) +
+            " AniList episodes, grouped in rows of up to 50. Provider-specific episode lookup is the next step.");
+
+        static constexpr int kEpisodesPerRow = 50;
+        static constexpr float kEpisodeTileWidth = 112.0f;
+        for (int first = 1; first <= totalEpisodes; first += kEpisodesPerRow)
+        {
+            const int last = std::min(totalEpisodes, first + kEpisodesPerRow - 1);
+            char range[64];
+            std::snprintf(range, sizeof(range), "EPISODES %d-%d", first, last);
+
+            brls::Label* rowHeading = new brls::Label();
+            rowHeading->setText(range);
+            rowHeading->setFontSize(17.0f);
+            rowHeading->setTextColor(nvgRGB(220, 228, 240));
+            rowHeading->setMargins(0, 8, 0, 0);
+            rowHeading->setFocusable(false);
+            m_rows->addView(rowHeading);
+
+            brls::HScrollingFrame* rowScroll = new brls::HScrollingFrame();
+            rowScroll->setWidth(1160.0f);
+            rowScroll->setHeight(82.0f);
+            rowScroll->setMargins(0, 3, 0, 0);
+            rowScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+
+            brls::Box* row = new brls::Box(brls::Axis::ROW);
+            const int count = last - first + 1;
+            row->setWidth(std::max(1160.0f, static_cast<float>(count) * kEpisodeTileWidth));
+            row->setHeight(76.0f);
+            row->setAlignItems(brls::AlignItems::FLEX_START);
+
+            for (int episode = first; episode <= last; ++episode)
+            {
+                brls::Box* tile = make_episode_tile(episode);
+                if (!m_firstEpisode)
+                    m_firstEpisode = tile;
+                row->addView(tile);
+            }
+            rowScroll->addView(row);
+            m_rows->addView(rowScroll);
+        }
+
+        return m_content;
+    }
+
+    void onContentAvailable() override
+    {
+        if (m_firstEpisode)
+            brls::Application::giveFocus(m_firstEpisode);
+    }
+
+private:
+    SaikouAnime m_anime;
+    int m_sourceId = 0;
+    brls::Box* m_content = nullptr;
+    brls::Label* m_status = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
+    brls::Box* m_rows = nullptr;
+    brls::Box* m_firstEpisode = nullptr;
+
+    brls::Box* make_episode_tile(int episode)
+    {
+        brls::Box* tile = new brls::Box(brls::Axis::COLUMN);
+        tile->setWidth(104.0f);
+        tile->setHeight(66.0f);
+        tile->setMargins(2, 4, 2, 0);
+        tile->setPadding(8.0f);
+        tile->setBackgroundColor(nvgRGB(27, 34, 48));
+        tile->setBorderColor(nvgRGB(48, 57, 74));
+        tile->setBorderThickness(1.0f);
+        tile->setCornerRadius(8.0f);
+        tile->setFocusable(true);
+
+        char labelText[32];
+        std::snprintf(labelText, sizeof(labelText), "EP %d", episode);
+        brls::Label* label = new brls::Label();
+        label->setText(labelText);
+        label->setFontSize(16.0f);
+        label->setTextColor(nvgRGB(244, 246, 250));
+        label->setFocusable(false);
+        tile->addView(label);
+
+        tile->registerAction("Select episode", brls::BUTTON_A,
+            [anime = m_anime, episode, sourceId = m_sourceId](brls::View*) {
+                log_stage("EPISODE SELECTED");
+                brls::Application::pushActivity(
+                    new EpisodeStreamActivity(anime, episode, sourceId),
+                    brls::TransitionAnimation::NONE);
+                return true;
+            });
+        return tile;
+    }
+};
+
 class AnimeDetailsActivity;
 static AnimeDetailsActivity* g_animeDetailsActivity = nullptr;
 
@@ -1111,7 +1479,10 @@ private:
                 g_selectedApiSource = id;
                 save_source_settings();
                 if (m_sourceStatus)
-                    m_sourceStatus->setText("Selected " + name + ". Episode lookup is being connected.");
+                    m_sourceStatus->setText("Selected " + name + ". Opening episode list.");
+                brls::Application::pushActivity(
+                    new EpisodeListActivity(anime, id),
+                    brls::TransitionAnimation::NONE);
                 log_stage("DETAIL SOURCE SELECTED");
                 return true;
             });
