@@ -1042,15 +1042,12 @@ public:
         root->addView(sourceRow);
 
         brls::Label* qualityHeading = new brls::Label();
-        qualityHeading->setText("QUALITY");
+        qualityHeading->setText("PROVIDER STREAM OPTIONS");
         qualityHeading->setFontSize(18.0f);
         qualityHeading->setTextColor(nvgRGB(220, 228, 240));
         qualityHeading->setMargins(0, 16, 0, 0);
         root->addView(qualityHeading);
 
-        brls::Box* qualityRow = new brls::Box(brls::Axis::ROW);
-        qualityRow->setHeight(54.0f);
-        qualityRow->setMargins(0, 5, 0, 0);
         brls::Label* streamStatus = new brls::Label();
         streamStatus->setText("The scraper will list its own stream labels here. If it returns hosters such as Vidstream, quality selection belongs in the player.");
         streamStatus->setFontSize(15.0f);
@@ -1148,17 +1145,6 @@ public:
         m_status->setFocusable(false);
         m_content->addView(m_status);
 
-        m_scroll = new brls::ScrollingFrame();
-        m_scroll->setWidthPercentage(100.0f);
-        m_scroll->setHeight(555.0f);
-        m_scroll->setMargins(0, 10, 0, 0);
-        m_scroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
-
-        m_rows = new brls::Box(brls::Axis::COLUMN);
-        m_rows->setWidth(1160.0f);
-        m_scroll->addView(m_rows);
-        m_content->addView(m_scroll);
-
         m_status->setText("Episodes must come from the selected streaming provider. That scraper is not connected yet.");
 
         m_emptyAction = new brls::Box(brls::Axis::COLUMN);
@@ -1189,9 +1175,7 @@ public:
 
     void onContentAvailable() override
     {
-        if (m_firstEpisode)
-            brls::Application::giveFocus(m_firstEpisode);
-        else if (m_emptyAction)
+        if (m_emptyAction)
             brls::Application::giveFocus(m_emptyAction);
     }
 
@@ -1200,43 +1184,7 @@ private:
     int m_sourceId = 0;
     brls::Box* m_content = nullptr;
     brls::Label* m_status = nullptr;
-    brls::ScrollingFrame* m_scroll = nullptr;
-    brls::Box* m_rows = nullptr;
-    brls::Box* m_firstEpisode = nullptr;
     brls::Box* m_emptyAction = nullptr;
-
-    brls::Box* make_episode_tile(int episode)
-    {
-        brls::Box* tile = new brls::Box(brls::Axis::COLUMN);
-        tile->setWidth(104.0f);
-        tile->setHeight(66.0f);
-        tile->setMargins(2, 4, 2, 0);
-        tile->setPadding(8.0f);
-        tile->setBackgroundColor(nvgRGB(27, 34, 48));
-        tile->setBorderColor(nvgRGB(48, 57, 74));
-        tile->setBorderThickness(1.0f);
-        tile->setCornerRadius(8.0f);
-        tile->setFocusable(true);
-
-        char labelText[32];
-        std::snprintf(labelText, sizeof(labelText), "EP %d", episode);
-        brls::Label* label = new brls::Label();
-        label->setText(labelText);
-        label->setFontSize(16.0f);
-        label->setTextColor(nvgRGB(244, 246, 250));
-        label->setFocusable(false);
-        tile->addView(label);
-
-        tile->registerAction("Select episode", brls::BUTTON_A,
-            [anime = m_anime, episode, sourceId = m_sourceId](brls::View*) {
-                log_stage("EPISODE SELECTED");
-                brls::Application::pushActivity(
-                    new EpisodeStreamActivity(anime, episode, sourceId),
-                    brls::TransitionAnimation::NONE);
-                return true;
-            });
-        return tile;
-    }
 };
 
 class AnimeDetailsActivity;
