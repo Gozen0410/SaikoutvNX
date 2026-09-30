@@ -1051,49 +1051,31 @@ public:
         brls::Box* qualityRow = new brls::Box(brls::Axis::ROW);
         qualityRow->setHeight(54.0f);
         qualityRow->setMargins(0, 5, 0, 0);
-        const char* qualities[] = { "Auto", "1080p", "720p", "480p" };
-        for (const char* quality : qualities)
-        {
-            brls::Box* choice = make_option(quality, m_quality == quality);
-            choice->registerAction("Select quality", brls::BUTTON_A,
-                [this, value = std::string(quality)](brls::View*) {
-                    m_quality = value;
-                    if (m_qualityStatus)
-                        m_qualityStatus->setText("Selected quality: " + m_quality);
-                    return true;
-                });
-            qualityRow->addView(choice);
-        }
-        root->addView(qualityRow);
+        brls::Label* streamStatus = new brls::Label();
+        streamStatus->setText("The scraper will list its own stream labels here. If it returns hosters such as Vidstream, quality selection belongs in the player.");
+        streamStatus->setFontSize(15.0f);
+        streamStatus->setLineHeight(21.0f);
+        streamStatus->setTextColor(nvgRGB(174, 184, 200));
+        streamStatus->setMargins(0, 8, 0, 0);
+        streamStatus->setFocusable(false);
+        root->addView(streamStatus);
 
         m_sourceStatus = new brls::Label();
         m_sourceStatus->setText("Selected " + std::string(api_source_name(m_sourceId)) +
-            ". Provider stream lookup is not connected yet.");
+            ". Waiting for provider-returned stream options.");
         m_sourceStatus->setFontSize(15.0f);
         m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
         m_sourceStatus->setMargins(0, 14, 0, 0);
         m_sourceStatus->setFocusable(false);
         root->addView(m_sourceStatus);
 
-        m_qualityStatus = new brls::Label();
-        m_qualityStatus->setText("Selected quality: " + m_quality);
-        m_qualityStatus->setFontSize(15.0f);
-        m_qualityStatus->setTextColor(nvgRGB(174, 184, 200));
-        m_qualityStatus->setMargins(0, 4, 0, 0);
-        m_qualityStatus->setFocusable(false);
-        root->addView(m_qualityStatus);
-
-        brls::Box* play = make_option("OPEN PLAYER", false);
-        play->setWidth(250.0f);
-        play->setHeight(58.0f);
-        play->setMargins(0, 20, 0, 0);
-        play->registerAction("Open player", brls::BUTTON_A, [this](brls::View*) {
-            brls::Application::pushActivity(
-                new PlaybackPreviewActivity(m_anime, m_episode, m_sourceId, m_quality),
-                brls::TransitionAnimation::NONE);
-            return true;
-        });
-        root->addView(play);
+        brls::Label* playerStatus = new brls::Label();
+        playerStatus->setText("Playback is not connected yet, so no fake Play button is shown.");
+        playerStatus->setFontSize(14.0f);
+        playerStatus->setTextColor(nvgRGB(135, 147, 166));
+        playerStatus->setMargins(0, 14, 0, 0);
+        playerStatus->setFocusable(false);
+        root->addView(playerStatus);
 
         return root;
     }
@@ -1177,54 +1159,30 @@ public:
         m_scroll->addView(m_rows);
         m_content->addView(m_scroll);
 
-        const int totalEpisodes = m_anime.episodes;
-        if (totalEpisodes <= 0)
-        {
-            m_status->setText("AniList has no episode count for this title. Provider episode lookup is not connected yet.");
-            return m_content;
-        }
+        m_status->setText("Episodes must come from the selected streaming provider. That scraper is not connected yet.");
 
-        m_status->setText(std::to_string(totalEpisodes) +
-            " AniList episodes, grouped in rows of up to 50. Provider-specific episode lookup is the next step.");
-
-        static constexpr int kEpisodesPerRow = 50;
-        static constexpr float kEpisodeTileWidth = 112.0f;
-        for (int first = 1; first <= totalEpisodes; first += kEpisodesPerRow)
-        {
-            const int last = std::min(totalEpisodes, first + kEpisodesPerRow - 1);
-            char range[64];
-            std::snprintf(range, sizeof(range), "EPISODES %d-%d", first, last);
-
-            brls::Label* rowHeading = new brls::Label();
-            rowHeading->setText(range);
-            rowHeading->setFontSize(17.0f);
-            rowHeading->setTextColor(nvgRGB(220, 228, 240));
-            rowHeading->setMargins(0, 8, 0, 0);
-            rowHeading->setFocusable(false);
-            m_rows->addView(rowHeading);
-
-            brls::HScrollingFrame* rowScroll = new brls::HScrollingFrame();
-            rowScroll->setWidth(1160.0f);
-            rowScroll->setHeight(82.0f);
-            rowScroll->setMargins(0, 3, 0, 0);
-            rowScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
-            brls::Box* row = new brls::Box(brls::Axis::ROW);
-            const int count = last - first + 1;
-            row->setWidth(std::max(1160.0f, static_cast<float>(count) * kEpisodeTileWidth));
-            row->setHeight(76.0f);
-            row->setAlignItems(brls::AlignItems::FLEX_START);
-
-            for (int episode = first; episode <= last; ++episode)
-            {
-                brls::Box* tile = make_episode_tile(episode);
-                if (!m_firstEpisode)
-                    m_firstEpisode = tile;
-                row->addView(tile);
-            }
-            rowScroll->addView(row);
-            m_rows->addView(rowScroll);
-        }
+        m_emptyAction = new brls::Box(brls::Axis::COLUMN);
+        m_emptyAction->setDimensions(270.0f, 56.0f);
+        m_emptyAction->setMargins(0, 18, 0, 0);
+        m_emptyAction->setPadding(12.0f);
+        m_emptyAction->setBackgroundColor(nvgRGB(27, 34, 48));
+        m_emptyAction->setBorderColor(nvgRGB(48, 57, 74));
+        m_emptyAction->setBorderThickness(1.0f);
+        m_emptyAction->setCornerRadius(8.0f);
+        m_emptyAction->setFocusable(true);
+        brls::Label* backLabel = new brls::Label();
+        backLabel->setText("BACK TO ANIME");
+        backLabel->setFontSize(16.0f);
+        backLabel->setTextColor(nvgRGB(244, 246, 250));
+        backLabel->setFocusable(false);
+        m_emptyAction->addView(backLabel);
+        m_emptyAction->registerAction("Return to anime", brls::BUTTON_A, [](brls::View*) {
+            brls::sync([] {
+                brls::Application::popActivity(brls::TransitionAnimation::NONE, [] {}, true);
+            });
+            return true;
+        });
+        m_content->addView(m_emptyAction);
 
         return m_content;
     }
@@ -1233,6 +1191,8 @@ public:
     {
         if (m_firstEpisode)
             brls::Application::giveFocus(m_firstEpisode);
+        else if (m_emptyAction)
+            brls::Application::giveFocus(m_emptyAction);
     }
 
 private:
@@ -1243,6 +1203,7 @@ private:
     brls::ScrollingFrame* m_scroll = nullptr;
     brls::Box* m_rows = nullptr;
     brls::Box* m_firstEpisode = nullptr;
+    brls::Box* m_emptyAction = nullptr;
 
     brls::Box* make_episode_tile(int episode)
     {
@@ -1327,8 +1288,8 @@ public:
             meta = "AniList score " + std::to_string(anime.score) + "/100";
         if (!anime.format.empty())
             meta += (meta.empty() ? "" : "    ") + anime.format;
-        if (anime.episodes > 0)
-            meta += (meta.empty() ? "" : "    ") + std::to_string(anime.episodes) + " episodes";
+        // AniList episode counts are metadata only and can be absent for long-running series.
+        // Episode rows must be populated by the selected streaming provider.
 
         brls::Label* metaLabel = new brls::Label();
         metaLabel->setText(meta);
@@ -1420,7 +1381,7 @@ public:
         m_sourceStatus->setFontSize(14.0f);
         m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
         m_sourceStatus->setMargins(0, 7, 0, 0);
-        m_sourceStatus->setText("Choose a source. Episode lookup and playback are the next integration step.");
+        m_sourceStatus->setText("Choose a provider. Episode and stream lookup are not connected in this build yet.");
         root->addView(m_sourceStatus);
     }
 
