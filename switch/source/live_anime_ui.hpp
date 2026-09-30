@@ -934,6 +934,15 @@ struct ProviderEpisode
     int number = 0;
     std::string title;
     std::string id;
+    std::string provider;
+    std::string category;
+};
+
+struct ProviderStream
+{
+    std::string url;
+    std::string quality;
+    std::string type;
 };
 
 static std::string encode_url_component(const std::string& input)
@@ -1029,20 +1038,28 @@ static std::vector<ProviderEpisode> parse_provider_episode_array(const std::stri
     return episodes;
 }
 
-static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& json)
+static size_t json_value_end(const std::string& json, size_t start)
 {
-    // Miruro returns a provider-keyed response. Walk its JSON objects and keep
-    // objects that carry an episode number plus a provider episode identifier.
-    std::vector<ProviderEpisode> episodes;
-    for (size_t p = 0; p < json.size(); ++p)
+    while (start < json.size() && std::isspace(static_cast<unsigned char>(json[start]))) ++start;
+    if (start >= json.size()) return start;
+    if (json[start] == '"')
     {
-        if (json[p] != '{') continue;
-        size_t end = p + 1;
-        int depth = 1;
-        bool quoted = false, escaped = false;
-        for (; end < json.size() && depth > 0; ++end)
+        bool escaped = false;
+        for (size_t i = start + 1; i < json.size(); ++i)
         {
-            const char c = json[end];
+            if (escaped) escaped = false;
+            else if (json[i] == '\\') escaped = true;
+            else if (json[i] == '"') return i + 1;
+        }
+        return json.size();
+    }
+    if (json[start] == '{' || json[start] == '[')
+    {
+        int depth = 0;
+        bool quoted = false, escaped = false;
+        for (size_t i = start; i < json.size(); ++i)
+        {
+            const char c = json[i];
             if (quoted)
             {
                 if (escaped) escaped = false;
@@ -1051,35 +1068,169 @@ static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& jso
                 continue;
             }
             if (c == '"') quoted = true;
-            else if (c == '{') ++depth;
-            else if (c == '}') --depth;
+            else if (c == '{' || c == '[') ++depth;
+            else if ((c == '}' || c == ']') && --depth == 0) return i + 1;
         }
-        if (depth != 0) break;
-        const std::string object = json.substr(p, end - p);
-        ProviderEpisode item;
-        item.number = json_int_field(object, "episodeNumber");
-        if (item.number <= 0) item.number = json_int_field(object, "number");
-        if (item.number <= 0) item.number = json_int_field(object, "episode");
-        item.id = first_string(object, { "episodeId", "id", "slug", "url" });
-        if (item.id.empty())
+        return json.size();
+    }
+    size_t end = start;
+    while (end < json.size() && json[end] != ',' && json[end] != '}' && json[end] != ']') ++end;
+    return end;
+}
+
+static std::vector<std::pair<std::string, std::string>> json_object_members(const std::string& object)
+{
+    std::vector<std::pair<std::string, std::string>> members;
+    if (object.empty() || object.front() != '{') return members;
+    size_t pos = 1;
+    while (pos < object.size())
+    {
+        while (pos < object.size() && (std::isspace(static_cast<unsigned char>(object[pos])) ||
+            object[pos] == ',')) ++pos;
+        if (pos >= object.size() || object[pos] == '}') break;
+        if (object[pos] != '"') break;
+        size_t keyEnd = pos + 1;
+        bool escaped = false;
+        for (; keyEnd < object.size(); ++keyEnd)
         {
-            const int numericId = json_int_field(object, "id");
-            if (numericId > 0) item.id = std::to_string(numericId);
+            if (escaped) escaped = false;
+            else if (object[keyEnd] == '\\') escaped = true;
+            else if (object[keyEnd] == '"') break;
         }
-        item.title = first_string(object, { "title", "name" });
-        if (item.number > 0 && !item.id.empty())
+        if (keyEnd >= object.size()) break;
+        const std::string key = decode_json_string(object, pos);
+        pos = keyEnd + 1;
+        while (pos < object.size() && std::isspace(static_cast<unsigned char>(object[pos]))) ++pos;
+        if (pos >= object.size() || object[pos++] != ':') break;
+        while (pos < object.size() && std::isspace(static_cast<unsigned char>(object[pos]))) ++pos;
+        const size_t end = json_value_end(object, pos);
+        if (end <= pos) break;
+        members.emplace_back(key, object.substr(pos, end - pos));
+        pos = end;
+    }
+    return members;
+}
+
+static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& json)
+{
+    // Keep Miruro's provider/audio context; its episode ID is also the /watch route.
+    std::vector<ProviderEpisode> episodes;
+    const std::string providers = json_object_field(json, "providers");
+    for (const auto& providerMember : json_object_members(providers))
+    {
+        const std::string episodeGroups = json_object_field(providerMember.second, "episodes");
+        auto appendEpisodes = [&](const std::string& category, const std::string& array) {
+            for (const std::string& object : json_object_array(array))
+            {
+                ProviderEpisode item;
+                item.number = json_int_field(object, "episodeNumber");
+                if (item.number <= 0) item.number = json_int_field(object, "number");
+                if (item.number <= 0) item.number = json_int_field(object, "episode");
+                item.id = first_string(object, { "id", "episodeId", "slug", "url" });
+                item.title = first_string(object, { "title", "name" });
+                item.provider = providerMember.first;
+                item.category = category;
+                if (item.number <= 0 || item.id.empty()) continue;
+                if (item.id.front() == '/') item.id.erase(item.id.begin());
+                if (item.title.empty()) item.title = "Episode " + std::to_string(item.number);
+                episodes.push_back(std::move(item));
+            }
+        };
+        if (!episodeGroups.empty() && episodeGroups.front() == '{')
         {
-            if (item.title.empty()) item.title = "Episode " + std::to_string(item.number);
-            episodes.push_back(std::move(item));
+            for (const auto& categoryMember : json_object_members(episodeGroups))
+                appendEpisodes(categoryMember.first, categoryMember.second);
+        }
+        else if (!episodeGroups.empty() && episodeGroups.front() == '[')
+        {
+            appendEpisodes("sub", episodeGroups);
         }
     }
+
+    // Compatibility with older flat Miruro responses.
+    if (episodes.empty())
+    {
+        std::string array = first_array(json, { "episodes", "data" });
+        for (const std::string& object : json_object_array(array))
+        {
+            ProviderEpisode item;
+            item.number = json_int_field(object, "episodeNumber");
+            if (item.number <= 0) item.number = json_int_field(object, "number");
+            if (item.number <= 0) item.number = json_int_field(object, "episode");
+            item.id = first_string(object, { "id", "episodeId", "slug", "url" });
+            item.title = first_string(object, { "title", "name" });
+            item.provider = first_string(object, { "provider" });
+            item.category = first_string(object, { "category" });
+            if (item.number > 0 && !item.id.empty())
+            {
+                if (item.id.front() == '/') item.id.erase(item.id.begin());
+                if (item.title.empty()) item.title = "Episode " + std::to_string(item.number);
+                episodes.push_back(std::move(item));
+            }
+        }
+    }
+
     std::stable_sort(episodes.begin(), episodes.end(),
-        [](const ProviderEpisode& a, const ProviderEpisode& b) { return a.number < b.number; });
+        [](const ProviderEpisode& a, const ProviderEpisode& b) {
+            if (a.number != b.number) return a.number < b.number;
+            if (a.provider != b.provider) return a.provider < b.provider;
+            return a.category < b.category;
+        });
     episodes.erase(std::unique(episodes.begin(), episodes.end(),
         [](const ProviderEpisode& a, const ProviderEpisode& b) {
-            return a.number == b.number && a.id == b.id;
+            return a.number == b.number && a.id == b.id &&
+                a.provider == b.provider && a.category == b.category;
         }), episodes.end());
     return episodes;
+}
+
+static std::vector<ProviderStream> parse_miruro_streams(const std::string& json)
+{
+    std::string array = first_array_in_data(json, { "streams", "sources" });
+    if (array.empty() && !json.empty() && json.front() == '[') array = json;
+    std::vector<ProviderStream> streams;
+    for (const std::string& object : json_object_array(array))
+    {
+        ProviderStream item;
+        item.url = first_string(object, { "url", "file", "src" });
+        item.quality = first_string(object, { "quality", "label", "resolution" });
+        item.type = first_string(object, { "type", "format" });
+        if (!item.url.empty()) streams.push_back(std::move(item));
+    }
+    return streams;
+}
+
+static std::vector<ProviderStream> fetch_miruro_streams(
+    const ProviderEpisode& episode, std::string& status)
+{
+    if (episode.id.empty() || episode.id.find("watch/") != 0)
+    {
+        status = "Miruro did not provide a valid /watch route for this episode.";
+        return {};
+    }
+    const size_t sourceId = static_cast<size_t>(ApiSourceId::Miruro);
+    const std::string roots[] = {
+        trim_api_base(g_providerBaseUrl[sourceId]),
+        trim_api_base(g_providerFallbackBaseUrl[sourceId])
+    };
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (roots[i].empty() || (i == 1 && roots[i] == roots[0])) continue;
+        std::string response;
+        if (!http_request(roots[i] + "/" + episode.id, nullptr, response, 25)) continue;
+        const size_t first = response.find_first_not_of(" \\t\\r\\n");
+        if (first == std::string::npos || response[first] != '{') continue;
+        std::vector<ProviderStream> streams = parse_miruro_streams(response);
+        if (!streams.empty())
+        {
+            status = "Miruro returned " + std::to_string(streams.size()) + " stream option(s).";
+            log_stage(i == 0 ? "MIRURO STREAMS READY" : "MIRURO STREAMS READY FROM FALLBACK");
+            return streams;
+        }
+    }
+    status = "Miruro returned no streams for this provider/episode.";
+    log_stage("MIRURO STREAM RESOLUTION EMPTY OR FAILED");
+    return {};
 }
 
 static std::vector<std::string> provider_search_titles(const SaikouAnime& anime)
@@ -1363,12 +1514,23 @@ private:
     std::string m_quality;
 };
 
+class EpisodeStreamActivity;
+static EpisodeStreamActivity* g_episodeStreamActivity = nullptr;
+
 class EpisodeStreamActivity : public brls::Activity
 {
 public:
     EpisodeStreamActivity(SaikouAnime anime, ProviderEpisode episode, int sourceId)
         : m_anime(std::move(anime)), m_providerEpisode(std::move(episode)), m_sourceId(sourceId)
     {
+        g_episodeStreamActivity = this;
+    }
+
+    ~EpisodeStreamActivity() override
+    {
+        m_lifetime->store(false, std::memory_order_release);
+        if (m_worker.joinable()) m_worker.join();
+        if (g_episodeStreamActivity == this) g_episodeStreamActivity = nullptr;
     }
 
     brls::View* createContentView() override
@@ -1380,10 +1542,8 @@ public:
         root->setPadding(30.0f);
         root->setBackgroundColor(nvgRGB(16, 20, 29));
 
-        char title[96];
-        std::snprintf(title, sizeof(title), "%s", m_providerEpisode.title.c_str());
         brls::Label* heading = new brls::Label();
-        heading->setText(title);
+        heading->setText(m_providerEpisode.title);
         heading->setFontSize(28.0f);
         heading->setTextColor(nvgRGB(244, 246, 250));
         root->addView(heading);
@@ -1395,92 +1555,118 @@ public:
         animeTitle->setMargins(0, 5, 0, 0);
         root->addView(animeTitle);
 
-        brls::Label* sourceHeading = new brls::Label();
-        sourceHeading->setText("STREAM SOURCE");
-        sourceHeading->setFontSize(18.0f);
-        sourceHeading->setTextColor(nvgRGB(220, 228, 240));
-        sourceHeading->setMargins(0, 20, 0, 0);
-        root->addView(sourceHeading);
-
-        brls::Box* sourceRow = new brls::Box(brls::Axis::ROW);
-        sourceRow->setHeight(54.0f);
-        sourceRow->setMargins(0, 5, 0, 0);
-        for (size_t i = 0; i < kApiSourceCount; ++i)
-        {
-            if (!g_providerEnabled[i]) continue;
-            const ApiSourceInfo& source = kApiSources[i];
-            brls::Box* choice = make_option(source.name, static_cast<int>(source.id) == m_sourceId);
-            choice->registerAction("Select stream source", brls::BUTTON_A,
-                [this, id = static_cast<int>(source.id), name = std::string(source.name)](brls::View*) {
-                    m_sourceId = id;
-                    g_selectedApiSource = id;
-                    save_source_settings();
-                    if (m_sourceStatus)
-                        m_sourceStatus->setText("Selected " + name + ". Provider stream lookup is not connected yet.");
-                    return true;
-                });
-            sourceRow->addView(choice);
-        }
-        root->addView(sourceRow);
-
-        brls::Label* qualityHeading = new brls::Label();
-        qualityHeading->setText("PROVIDER STREAM OPTIONS");
-        qualityHeading->setFontSize(18.0f);
-        qualityHeading->setTextColor(nvgRGB(220, 228, 240));
-        qualityHeading->setMargins(0, 16, 0, 0);
-        root->addView(qualityHeading);
-
-        brls::Label* streamStatus = new brls::Label();
-        streamStatus->setText("The scraper will list its own stream labels here. If it returns hosters such as Vidstream, quality selection belongs in the player.");
-        streamStatus->setFontSize(15.0f);
-        streamStatus->setLineHeight(21.0f);
-        streamStatus->setTextColor(nvgRGB(174, 184, 200));
-        streamStatus->setMargins(0, 8, 0, 0);
-        streamStatus->setFocusable(false);
-        root->addView(streamStatus);
-
         m_sourceStatus = new brls::Label();
-        m_sourceStatus->setText("Episode ID " + m_providerEpisode.id +
-            " came from " + std::string(api_source_name(m_sourceId)) +
-            ". Stream extraction is the next provider step.");
         m_sourceStatus->setFontSize(15.0f);
+        m_sourceStatus->setLineHeight(21.0f);
         m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
-        m_sourceStatus->setMargins(0, 14, 0, 0);
+        m_sourceStatus->setMargins(0, 16, 0, 0);
         m_sourceStatus->setFocusable(false);
+        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro))
+        {
+            m_sourceStatus->setText(
+                "Resolving " + m_providerEpisode.provider + " (" +
+                m_providerEpisode.category + ") stream options...");
+        }
+        else
+        {
+            m_sourceStatus->setText("Stream extraction for this provider is not connected yet.");
+        }
         root->addView(m_sourceStatus);
 
+        m_streamRow = new brls::Box(brls::Axis::ROW);
+        m_streamRow->setWidthPercentage(100.0f);
+        m_streamRow->setHeight(70.0f);
+        m_streamRow->setMargins(0, 12, 0, 0);
+        root->addView(m_streamRow);
+
         brls::Label* playerStatus = new brls::Label();
-        playerStatus->setText("Playback is not connected yet, so no fake Play button is shown.");
+        playerStatus->setText(
+            "Stream choices come from the scraper. Video playback is a separate integration step.");
         playerStatus->setFontSize(14.0f);
         playerStatus->setTextColor(nvgRGB(135, 147, 166));
-        playerStatus->setMargins(0, 14, 0, 0);
+        playerStatus->setMargins(0, 18, 0, 0);
         playerStatus->setFocusable(false);
         root->addView(playerStatus);
 
+        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro))
+            start_load();
         return root;
+    }
+
+    void tick()
+    {
+        if (!m_ready.load(std::memory_order_acquire)) return;
+        if (m_worker.joinable()) m_worker.join();
+        m_ready.store(false, std::memory_order_release);
+        if (m_sourceStatus) m_sourceStatus->setText(m_statusText);
+        clear_box(m_streamRow);
+        m_streamChoices.clear();
+        if (m_streams.empty())
+        {
+            brls::Box* empty = make_option("No streams returned", false);
+            empty->setFocusable(false);
+            m_streamRow->addView(empty);
+            return;
+        }
+
+        for (size_t i = 0; i < m_streams.size(); ++i)
+        {
+            const ProviderStream& stream = m_streams[i];
+            const std::string label =
+                (stream.quality.empty() ? std::string("Stream") : stream.quality) +
+                (stream.type.empty() ? std::string() : "  " + stream.type);
+            brls::Box* choice = make_option(label, i == m_selectedStream);
+            choice->registerAction("Select scraper stream option", brls::BUTTON_A,
+                [this, i, label](brls::View*) {
+                    m_selectedStream = i;
+                    if (m_sourceStatus)
+                        m_sourceStatus->setText("Selected " + label +
+                            ". A Switch video playback backend is still needed.");
+                    for (size_t j = 0; j < m_streamChoices.size(); ++j)
+                    {
+                        const bool selected = j == m_selectedStream;
+                        m_streamChoices[j]->setBackgroundColor(
+                            selected ? nvgRGB(31, 64, 79) : nvgRGB(27, 34, 48));
+                        m_streamChoices[j]->setBorderColor(
+                            selected ? nvgRGB(67, 190, 218) : nvgRGB(48, 57, 74));
+                        m_streamChoices[j]->setBorderThickness(selected ? 2.0f : 1.0f);
+                    }
+                    return true;
+                });
+            m_streamChoices.push_back(choice);
+            m_streamRow->addView(choice);
+        }
+        if (!m_streamChoices.empty())
+            brls::Application::giveFocus(m_streamChoices[0]);
     }
 
 private:
     SaikouAnime m_anime;
     ProviderEpisode m_providerEpisode;
     int m_sourceId = 0;
-    std::string m_quality = "Auto";
+    size_t m_selectedStream = 0;
+    brls::Box* m_streamRow = nullptr;
     brls::Label* m_sourceStatus = nullptr;
-    brls::Label* m_qualityStatus = nullptr;
+    std::vector<brls::Box*> m_streamChoices;
+    std::vector<ProviderStream> m_streams;
+    std::string m_statusText;
+    std::thread m_worker;
+    std::atomic<bool> m_ready{ false };
+    std::shared_ptr<std::atomic<bool>> m_lifetime =
+        std::make_shared<std::atomic<bool>>(true);
 
     brls::Box* make_option(const std::string& text, bool selected)
     {
         brls::Box* option = new brls::Box(brls::Axis::COLUMN);
-        option->setWidth(168.0f);
-        option->setHeight(48.0f);
-        option->setMargins(0, 0, 7, 0);
-        option->setPadding(8.0f);
+        option->setWidth(210.0f);
+        option->setHeight(58.0f);
+        option->setMargins(0, 0, 9, 0);
+        option->setPadding(9.0f);
         option->setBackgroundColor(selected ? nvgRGB(31, 64, 79) : nvgRGB(27, 34, 48));
         option->setBorderColor(selected ? nvgRGB(67, 190, 218) : nvgRGB(48, 57, 74));
         option->setBorderThickness(selected ? 2.0f : 1.0f);
         option->setCornerRadius(8.0f);
         option->setFocusable(true);
-
         brls::Label* label = new brls::Label();
         label->setText(text);
         label->setFontSize(15.0f);
@@ -1488,6 +1674,18 @@ private:
         label->setFocusable(false);
         option->addView(label);
         return option;
+    }
+
+    void start_load()
+    {
+        const auto lifetime = m_lifetime;
+        const ProviderEpisode episode = m_providerEpisode;
+        m_worker = std::thread([this, lifetime, episode] {
+            perf_log("MIRURO STREAM REQUEST START");
+            m_streams = fetch_miruro_streams(episode, m_statusText);
+            if (!lifetime->load(std::memory_order_acquire)) return;
+            m_ready.store(true, std::memory_order_release);
+        });
     }
 };
 
@@ -1629,7 +1827,14 @@ public:
                 tile->setCornerRadius(7.0f);
                 tile->setFocusable(true);
                 brls::Label* label = new brls::Label();
-                label->setText(episode.title);
+                std::string episodeLabel = "Episode " + std::to_string(episode.number);
+                if (!episode.provider.empty())
+                    episodeLabel += "  " + episode.provider;
+                if (!episode.category.empty())
+                    episodeLabel += "  " + episode.category;
+                if (!episode.title.empty() && episode.title != "Episode " + std::to_string(episode.number))
+                    episodeLabel += " — " + episode.title;
+                label->setText(episodeLabel);
                 label->setFontSize(15.0f);
                 label->setTextColor(nvgRGB(244, 246, 250));
                 label->setFocusable(false);
@@ -5955,6 +6160,8 @@ static void tick_live_ui_activities()
 
     if (g_episodeListActivity)
         g_episodeListActivity->tick();
+    if (g_episodeStreamActivity)
+        g_episodeStreamActivity->tick();
     if (g_pairingActivity)
         g_pairingActivity->tick();
     if (g_libraryActivity)
