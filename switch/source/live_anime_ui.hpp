@@ -1265,11 +1265,6 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         status = "Invalid episode provider.";
         return {};
     }
-    if (static_cast<ApiSourceId>(sourceId) == ApiSourceId::Gogoanime)
-    {
-        status = "This GoGoAnime fork only exposes a latest-episodes feed; it has no anime search/details episode route yet.";
-        return {};
-    }
     const std::string base = trim_api_base(g_providerBaseUrl[sourceId]);
     const std::string fallback = trim_api_base(g_providerFallbackBaseUrl[sourceId]);
     if (base.empty() && fallback.empty())
@@ -1407,6 +1402,169 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
                 break;
             episodes = parse_provider_episode_array(
                 first_array_in_data(response, { "episodes", "response" }));
+            break;
+        }
+        case ApiSourceId::KickAssAnime:
+        {
+            static constexpr const char* kKaaBase = "https://kaa.lt";
+
+            // KickAssAnime's current native flow is JSON-based:
+            // POST /api/fsearch -> slug -> /api/show/{slug}
+            // -> /language -> /episodes?page=N&lang=...
+            std::string slug;
+
+            for (const std::string& title : provider_search_titles(anime))
+            {
+                const std::string searchUrl = std::string(kKaaBase) + "/api/fsearch";
+                const std::string body =
+                    std::string("{"page":1,"query":") + json_quote(title) + "}";
+                log_stage(("KAA SEARCH title=" + title).c_str());
+
+                if (!http_request(searchUrl, &body, response, 20))
+                    continue;
+
+                const std::string results = first_array(response, { "result" });
+                for (const std::string& object : json_object_array(results))
+                {
+                    slug = first_string(object, { "slug" });
+                    if (!slug.empty()) break;
+                }
+
+                if (!slug.empty())
+                    break;
+
+                log_stage("KAA SEARCH HAD NO MATCH; trying next AniList title");
+            }
+
+            if (slug.empty())
+            {
+                status = "KickAssAnime search returned no matching show.";
+                break;
+            }
+
+            {
+                const std::string showUrl =
+                    std::string(kKaaBase) + "/api/show/" + encode_url_component(slug);
+                if (!http_request(showUrl, nullptr, response, 20))
+                {
+                    status = "KickAssAnime show lookup failed.";
+                    break;
+                }
+                log_stage(("KAA SHOW READY slug=" + slug).c_str());
+            }
+
+            // Mirror AnikkuNX's language preference: Japanese first, English second.
+            std::string lang = "ja-JP";
+            {
+                const std::string languageUrl =
+                    std::string(kKaaBase) + "/api/show/" + encode_url_component(slug) + "/language";
+                if (http_request(languageUrl, nullptr, response, 20))
+                {
+                    const bool hasJapanese = response.find(""ja-JP"") != std::string::npos;
+                    const bool hasEnglish = response.find(""en-US"") != std::string::npos;
+                    if (hasJapanese)
+                        lang = "ja-JP";
+                    else if (hasEnglish)
+                        lang = "en-US";
+                    log_stage(("KAA LANGUAGE selected=" + lang).c_str());
+                }
+                else
+                {
+                    log_stage("KAA LANGUAGE REQUEST FAILED; trying ja-JP directly");
+                }
+            }
+
+            for (const char* candidate : { lang.c_str(), "ja-JP", "en-US" })
+            {
+                bool duplicate = false;
+                if (std::string(candidate) == "ja-JP" && lang == "ja-JP" && candidate != lang.c_str())
+                    duplicate = true;
+                if (std::string(candidate) == "en-US" && lang == "en-US" && candidate != lang.c_str())
+                    duplicate = true;
+                if (duplicate) continue;
+
+                episodes.clear();
+                bool pageFailed = false;
+                int pageCount = 1;
+
+                for (int page = 1; page <= pageCount; ++page)
+                {
+                    const std::string episodeUrl =
+                        std::string(kKaaBase) + "/api/show/" +
+                        encode_url_component(slug) + "/episodes?page=" +
+                        std::to_string(page) + "&lang=" + encode_url_component(candidate);
+
+                    char marker[192];
+                    std::snprintf(marker, sizeof(marker),
+                        "KAA EPISODES REQUEST page=%d lang=%s",
+                        page, candidate);
+                    log_stage(marker);
+
+                    if (!http_request(episodeUrl, nullptr, response, 20))
+                    {
+                        pageFailed = true;
+                        break;
+                    }
+
+                    const std::string result = first_array(response, { "result" });
+                    const std::vector<std::string> objects = json_object_array(result);
+                    if (page == 1)
+                    {
+                        const std::string pages = json_array_field(response, "pages");
+                        if (!pages.empty())
+                        {
+                            const int discovered = static_cast<int>(
+                                std::count(pages.begin(), pages.end(), '{'));
+                            if (discovered > 0) pageCount = discovered;
+                        }
+                    }
+
+                    for (const std::string& object : objects)
+                    {
+                        const std::string numberText = first_string(
+                            object, { "episode_string", "episodeNumber", "episode" });
+                        const std::string episodeSlug = first_string(object, { "slug" });
+                        if (numberText.empty() || episodeSlug.empty())
+                            continue;
+
+                        ProviderEpisode item;
+                        item.number = std::atoi(numberText.c_str());
+                        if (item.number <= 0)
+                            continue;
+                        item.title = first_string(object, { "title" });
+                        if (item.title.empty())
+                            item.title = "Episode " + std::to_string(item.number);
+                        item.id = "/" + slug + "/ep-" + numberText + "-" + episodeSlug;
+                        item.provider = "KickAssAnime";
+                        item.category = candidate;
+                        episodes.push_back(std::move(item));
+                    }
+
+                    std::snprintf(marker, sizeof(marker),
+                        "KAA EPISODES PAGE DONE page=%d count=%zu totalPages=%d",
+                        page, objects.size(), pageCount);
+                    log_stage(marker);
+                }
+
+                if (!pageFailed && !episodes.empty())
+                    break;
+            }
+
+            std::stable_sort(episodes.begin(), episodes.end(),
+                [](const ProviderEpisode& a, const ProviderEpisode& b) {
+                    return a.number < b.number;
+                });
+
+            episodes.erase(std::unique(episodes.begin(), episodes.end(),
+                [](const ProviderEpisode& a, const ProviderEpisode& b) {
+                    return a.number == b.number && a.id == b.id;
+                }), episodes.end());
+
+            char marker[160];
+            std::snprintf(marker, sizeof(marker),
+                "KAA EPISODES FINAL count=%zu slug=%s",
+                episodes.size(), slug.c_str());
+            log_stage(marker);
             break;
         }
         case ApiSourceId::Gogoanime:
