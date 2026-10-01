@@ -650,7 +650,7 @@ inline std::vector<Stream> fetch_streams(const Episode& episode, const std::stri
             m3u8, detail::trim(server.name) + " - " + detail::trim(server.type),
             referer, headers);
         for (auto& v : variants) {
-            v.type = detail::trim(server.type).empty() ? "Sub" : detail::trim(server.type);
+            v.type = detail::trim(server.name); if (!detail::trim(server.type).empty()) v.type += "  " + detail::trim(server.type);
             v.headers.push_back("Referer: " + referer);
             const std::string key = v.url + "|" + v.quality + "|" + v.type;
             if (seen.insert(key).second) out.push_back(std::move(v));
