@@ -878,8 +878,30 @@ static bool download_image(const std::string& url, const std::string& path)
 
 static void initialize_source_settings()
 {
+    static const char* kDefaultApiRoots[kApiSourceCount] =
+    {
+        "https://api-anime-rouge.vercel.app",
+        "https://animescraper.vercel.app",
+        "https://api-anime-rouge.vercel.app",
+        "https://api-anime-rouge.vercel.app",
+        "https://api-anime-rouge.vercel.app",
+    };
+
+    static const char* kDefaultFallbackApiRoots[kApiSourceCount] =
+    {
+        "",
+        "",
+        "",
+        "",
+        "",
+    };
+
     for (size_t i = 0; i < kApiSourceCount; ++i)
+    {
         g_providerEnabled[i] = true;
+        g_providerBaseUrl[i] = kDefaultApiRoots[i];
+        g_providerFallbackBaseUrl[i] = kDefaultFallbackApiRoots[i];
+    }
 
     FILE* file = std::fopen(kSettingsPath, "r");
     if (!file) return;
