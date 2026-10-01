@@ -3,6 +3,7 @@
 #include <borealis.hpp>
 #include <curl/curl.h>
 #include "kaa_crypto.hpp"
+#include "anikoto_provider.hpp"
 #include <switch/applets/swkbd.h>
 #include <switch/services/nifm.h>
 #include <switch.h>
@@ -86,7 +87,7 @@ struct SaikouAnime
     std::string posterPath;
 };
 
-static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true };
+static bool g_providerEnabled[kApiSourceCount] = { true, true, true, true, true, true, true, true, true, true, true };
 static std::string g_providerBaseUrl[kApiSourceCount] = {};
 static std::string g_providerFallbackBaseUrl[kApiSourceCount] = {};
 static int g_selectedApiSource = 0;
@@ -1927,6 +1928,40 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
         }
         case ApiSourceId::Gogoanime:
             return {};
+        case ApiSourceId::Anichi:
+        case ApiSourceId::Anikoto:
+        case ApiSourceId::AniWave:
+        case ApiSourceId::AnimeSogo:
+        case ApiSourceId::AnimeKai:
+        {
+            const char* baseUrl = anikoto::base_for_source(sourceId - static_cast<int>(ApiSourceId::Anichi));
+            if (!baseUrl || !*baseUrl)
+                break;
+
+            for (const std::string& title : provider_search_titles(anime))
+            {
+                std::string localStatus;
+                std::vector<anikoto::Episode> found =
+                    anikoto::fetch_episodes(title, baseUrl, localStatus);
+                if (!found.empty())
+                {
+                    for (const anikoto::Episode& ep : found)
+                    {
+                        ProviderEpisode item;
+                        item.number = ep.number;
+                        item.title = ep.title;
+                        item.id = ep.id;
+                        item.provider = kApiSources[sourceId].name;
+                        item.category = "Sub";
+                        episodes.push_back(std::move(item));
+                    }
+                    break;
+                }
+                log_stage(("ANIKOTO SEARCH MISS source=" + std::string(kApiSources[sourceId].name)).c_str());
+            }
+            break;
+        }
+
     }
 
     if (!episodes.empty())
@@ -2079,7 +2114,9 @@ public:
         m_sourceStatus->setMargins(0, 16, 0, 0);
         m_sourceStatus->setFocusable(false);
         if (m_sourceId == static_cast<int>(ApiSourceId::Miruro) ||
-            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
+            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime) ||
+            (m_sourceId >= static_cast<int>(ApiSourceId::Anichi) &&
+             m_sourceId <= static_cast<int>(ApiSourceId::AnimeKai)))
         {
             m_sourceStatus->setText(
                 "Loading available sources from " +
@@ -2217,6 +2254,28 @@ private:
             {
                 perf_log("KAA SOURCE REQUEST START");
                 m_streams = fetch_kaa_sources(episode, m_statusText);
+            }
+            else if (m_sourceId >= static_cast<int>(ApiSourceId::Anichi) &&
+                     m_sourceId <= static_cast<int>(ApiSourceId::AnimeKai))
+            {
+                const int localSource = m_sourceId - static_cast<int>(ApiSourceId::Anichi);
+                const char* baseUrl = anikoto::base_for_source(localSource);
+                perf_log("ANIKOTO SOURCE REQUEST START");
+                anikoto::Episode sourceEpisode;
+                sourceEpisode.number = episode.number;
+                sourceEpisode.title = episode.title;
+                sourceEpisode.id = episode.id;
+                m_streams.clear();
+                std::string status;
+                const std::vector<anikoto::Stream> streams =
+                    anikoto::fetch_streams(sourceEpisode, baseUrl, status);
+                for (const anikoto::Stream& s : streams)
+                    m_streams.push_back({s.url, s.quality, s.type, s.headers});
+                m_statusText = status;
+                char marker[160];
+                std::snprintf(marker, sizeof(marker), "ANIKOTO STREAMS READY source=%d count=%zu",
+                    m_sourceId, m_streams.size());
+                log_stage(marker);
             }
             else
             {
