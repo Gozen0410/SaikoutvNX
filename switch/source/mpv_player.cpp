@@ -129,6 +129,13 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url, std::vector<std::string>
 
 SaikouMpvVideoView::~SaikouMpvVideoView()
 {
+    if (m_vg)
+        releaseTarget(m_vg);
+    else
+    {
+        if (m_fbo) glDeleteFramebuffers(1, &m_fbo);
+        if (m_texture) glDeleteTextures(1, &m_texture);
+    }
     if (m_render)
         mpv_render_context_free(m_render);
     if (m_mpv)
@@ -158,9 +165,17 @@ void SaikouMpvVideoView::handleEvents()
         switch (event->event_id)
         {
             case MPV_EVENT_FILE_LOADED:
+            {
+                int64_t value = 0;
+                if (mpv_get_property(m_mpv, "dwidth", MPV_FORMAT_INT64, &value) >= 0 && value > 0)
+                    m_videoWidth = static_cast<int>(value);
+                if (mpv_get_property(m_mpv, "dheight", MPV_FORMAT_INT64, &value) >= 0 && value > 0)
+                    m_videoHeight = static_cast<int>(value);
+                m_framePending = true;
                 m_status = "Playing  |  A pause/resume  |  B back";
-                brls::Logger::info("mpv stream loaded");
+                brls::Logger::info("mpv stream loaded video={}x{}", m_videoWidth, m_videoHeight);
                 break;
+            }
             case MPV_EVENT_END_FILE:
             {
                 auto* end = static_cast<mpv_event_end_file*>(event->data);
@@ -181,25 +196,117 @@ void SaikouMpvVideoView::handleEvents()
     }
 }
 
+bool SaikouMpvVideoView::ensureTarget(NVGcontext* vg, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return false;
+    if (m_fbo != 0 && width == m_targetWidth && height == m_targetHeight)
+        return true;
+
+    releaseTarget(vg);
+
+    glGenTextures(1, &m_texture);
+    glBindTexture(GL_TEXTURE_2D, m_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    GLint previousFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFbo);
+    glGenFramebuffers(1, &m_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_texture, 0);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFbo));
+
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        brls::Logger::error("mpv video FBO incomplete: 0x{:x}", status);
+        releaseTarget(vg);
+        return false;
+    }
+
+    m_nvgImage = nvglCreateImageFromHandle(vg, m_texture, width, height, kNvgImageNoDelete);
+    if (m_nvgImage < 0)
+    {
+        brls::Logger::error("failed to adopt mpv video texture into NanoVG");
+        releaseTarget(vg);
+        return false;
+    }
+
+    m_targetWidth = width;
+    m_targetHeight = height;
+    brls::Logger::info("mpv video render target ready {}x{}", width, height);
+    return true;
+}
+
+void SaikouMpvVideoView::releaseTarget(NVGcontext* vg)
+{
+    if (m_nvgImage >= 0 && vg)
+    {
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = -1;
+    }
+    if (m_fbo)
+    {
+        glDeleteFramebuffers(1, &m_fbo);
+        m_fbo = 0;
+    }
+    if (m_texture)
+    {
+        glDeleteTextures(1, &m_texture);
+        m_texture = 0;
+    }
+    m_targetWidth = m_targetHeight = 0;
+}
+
 void SaikouMpvVideoView::draw(NVGcontext* vg, float x, float y, float width,
                               float height, brls::Style style, brls::FrameContext* ctx)
 {
     handleEvents();
-    if (m_render)
+    m_vg = vg;
+
+    if (m_render && m_videoWidth > 0 && m_videoHeight > 0 &&
+        ensureTarget(vg, m_videoWidth, m_videoHeight))
     {
-        const int framebufferWidth = static_cast<int>(brls::Application::windowWidth);
-        const int framebufferHeight = static_cast<int>(brls::Application::windowHeight);
-        mpv_opengl_fbo fbo{m_defaultFramebuffer, framebufferWidth, framebufferHeight, 0};
-        int flipY = 1;
-        mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
-            {MPV_RENDER_PARAM_FLIP_Y, &flipY},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-        };
-        mpv_render_context_render(m_render, params);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFramebuffer);
-        glViewport(0, 0, framebufferWidth, framebufferHeight);
-        mpv_render_context_report_swap(m_render);
+        const uint64_t updateFlags = mpv_render_context_update(m_render);
+        if (updateFlags & MPV_RENDER_UPDATE_FRAME)
+            m_framePending = true;
+
+        if (m_framePending)
+        {
+            GLint previousFbo = 0;
+            GLint previousViewport[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFbo);
+            glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+            mpv_opengl_fbo target{static_cast<int>(m_fbo), m_videoWidth, m_videoHeight, 0};
+            int flipY = 0;
+            mpv_render_param params[] = {
+                {MPV_RENDER_PARAM_OPENGL_FBO, &target},
+                {MPV_RENDER_PARAM_FLIP_Y, &flipY},
+                {MPV_RENDER_PARAM_INVALID, nullptr},
+            };
+            const int result = mpv_render_context_render(m_render, params);
+            if (result < 0)
+                brls::Logger::error("mpv render failed: {}", mpv_error_string(result));
+            else
+                m_framePending = false;
+
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFbo));
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glUseProgram(0);
+            mpv_render_context_report_swap(m_render);
+        }
+
+        NVGpaint video = nvgImagePattern(vg, x, y, width, height, 0.0f, m_nvgImage, 1.0f);
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, width, height);
+        nvgFillPaint(vg, video);
+        nvgFill(vg);
     }
 
     if (!m_status.empty())
