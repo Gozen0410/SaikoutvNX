@@ -1185,6 +1185,66 @@ static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& jso
     return episodes;
 }
 
+
+static std::vector<ProviderStream> fetch_kaa_sources(
+    const ProviderEpisode& episode, std::string& status)
+{
+    if (episode.id.empty())
+    {
+        status = "KickAssAnime did not provide an episode route.";
+        return {};
+    }
+
+    // AnikkuNX's native KAA flow:
+    // /api/show/{anime-slug}/episode/ep-{number}-{slug}
+    // returns { "servers": [ { "name": ..., "src": ... }, ... ] }.
+    const std::string route =
+        "https://kaa.lt/api/show" + episode.id;
+    std::string response;
+
+    log_stage(("KAA SOURCE REQUEST route=" + route).c_str());
+    if (!http_request(route, nullptr, response, 25))
+    {
+        status = "KickAssAnime source request failed.";
+        log_stage("KAA SOURCE REQUEST FAILED");
+        return {};
+    }
+
+    const std::string servers = first_array(response, { "servers" });
+    if (servers.empty())
+    {
+        status = "KickAssAnime returned no server sources.";
+        log_stage("KAA SOURCE RESPONSE HAD NO SERVERS");
+        return {};
+    }
+
+    std::vector<ProviderStream> sources;
+    for (const std::string& object : json_object_array(servers))
+    {
+        const std::string name = first_string(object, { "name", "server", "provider" });
+        const std::string src = first_string(object, { "src", "url", "source" });
+
+        if (name.empty() || src.empty())
+            continue;
+
+        ProviderStream item;
+        item.url = src;
+        item.quality = name;
+        item.type = "source";
+        sources.push_back(std::move(item));
+
+        log_stage(("KAA SOURCE FOUND name=" + name).c_str());
+    }
+
+    status = "KickAssAnime returned " + std::to_string(sources.size()) +
+        " source(s).";
+    char marker[128];
+    std::snprintf(marker, sizeof(marker),
+        "KAA SOURCES FINAL count=%zu", sources.size());
+    log_stage(marker);
+    return sources;
+}
+
 static std::vector<ProviderStream> parse_miruro_streams(const std::string& json)
 {
     std::string array = first_array_in_data(json, { "streams", "sources" });
@@ -1740,15 +1800,16 @@ public:
         m_sourceStatus->setTextColor(nvgRGB(174, 184, 200));
         m_sourceStatus->setMargins(0, 16, 0, 0);
         m_sourceStatus->setFocusable(false);
-        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro))
+        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro) ||
+            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
         {
             m_sourceStatus->setText(
-                "Resolving " + m_providerEpisode.provider + " (" +
-                m_providerEpisode.category + ") stream options...");
+                "Loading available sources from " +
+                std::string(api_source_name(m_sourceId)) + "...");
         }
         else
         {
-            m_sourceStatus->setText("Stream extraction for this provider is not connected yet.");
+            m_sourceStatus->setText("Source extraction for this provider is not connected yet.");
         }
         root->addView(m_sourceStatus);
 
@@ -1767,7 +1828,8 @@ public:
         playerStatus->setFocusable(false);
         root->addView(playerStatus);
 
-        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro))
+        if (m_sourceId == static_cast<int>(ApiSourceId::Miruro) ||
+            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
             start_load();
         return root;
     }
@@ -1857,8 +1919,16 @@ private:
         const auto lifetime = m_lifetime;
         const ProviderEpisode episode = m_providerEpisode;
         m_worker = std::thread([this, lifetime, episode] {
-            perf_log("MIRURO STREAM REQUEST START");
-            m_streams = fetch_miruro_streams(episode, m_statusText);
+            if (m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
+            {
+                perf_log("KAA SOURCE REQUEST START");
+                m_streams = fetch_kaa_sources(episode, m_statusText);
+            }
+            else
+            {
+                perf_log("MIRURO STREAM REQUEST START");
+                m_streams = fetch_miruro_streams(episode, m_statusText);
+            }
             if (!lifetime->load(std::memory_order_acquire)) return;
             m_ready.store(true, std::memory_order_release);
         });
