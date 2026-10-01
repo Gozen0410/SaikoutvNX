@@ -1343,7 +1343,7 @@ static std::vector<ProviderStream> kaa_extract_server(const std::string& serverU
 
     // New Astro-style KAA player: the page embeds manifest:[0,"//..."].
     std::string clean = replace_all(html, "&quot;", "\"");
-    const std::string manifestMarker = "manifest\\":[0,\\\"";
+    const std::string manifestMarker = "manifest\":[0,\"";
     const size_t manifestAt = clean.find(manifestMarker);
     if (manifestAt != std::string::npos)
     {
