@@ -97,7 +97,6 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url, std::vector<std::string>
         return;
     }
 
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &m_defaultFramebuffer);
     mpv_opengl_init_params glInit{saikou_mpv_get_proc_address, nullptr};
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
