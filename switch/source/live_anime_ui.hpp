@@ -2,6 +2,7 @@
 
 #include <borealis.hpp>
 #include <curl/curl.h>
+#include "kaa_crypto.hpp"
 #include <switch/applets/swkbd.h>
 #include <switch/services/nifm.h>
 #include <switch.h>
@@ -161,7 +162,8 @@ static size_t append_http_data(char* data, size_t size, size_t count, void* user
 
 static bool http_request(const std::string& url, const std::string* postBody,
     std::string& response, long timeoutSeconds = 10, const std::string* bearerToken = nullptr,
-    const char* userAgent = nullptr)
+    const char* userAgent = nullptr,
+    const std::vector<std::string>* extraHeaders = nullptr)
 {
     if (!ensure_network_ready() || !ensure_curl_ready())
         return false;
@@ -184,6 +186,11 @@ static bool http_request(const std::string& url, const std::string* postBody,
         {
             const std::string authHeader = "Authorization: Bearer " + *bearerToken;
             headers = curl_slist_append(headers, authHeader.c_str());
+        }
+        if (extraHeaders)
+        {
+            for (const std::string& extra : *extraHeaders)
+                headers = curl_slist_append(headers, extra.c_str());
         }
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -1188,6 +1195,227 @@ static std::vector<ProviderEpisode> parse_miruro_episodes(const std::string& jso
 }
 
 
+static std::string kaa_host(const std::string& url)
+{
+    const size_t scheme = url.find("://");
+    const size_t start = scheme == std::string::npos ? 0 : scheme + 3;
+    const size_t end = url.find_first_of("/?#", start);
+    return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+static std::string kaa_query_value(const std::string& url, const std::string& key)
+{
+    const size_t q = url.find('?');
+    if (q == std::string::npos) return {};
+    size_t p = q + 1;
+    while (p < url.size())
+    {
+        const size_t amp = url.find('&', p);
+        const std::string part = url.substr(p, amp == std::string::npos ? std::string::npos : amp - p);
+        const std::string needle = key + "=";
+        if (part.rfind(needle, 0) == 0) return part.substr(needle.size());
+        if (amp == std::string::npos) break;
+        p = amp + 1;
+    }
+    return {};
+}
+
+static std::string kaa_unescape_url(std::string value)
+{
+    value = replace_all(value, "\\/", "/");
+    value = replace_all(value, "\\u0026", "&");
+    return value;
+}
+
+static std::string kaa_fix_url(const std::string& raw, const std::string& base)
+{
+    std::string value = kaa_unescape_url(raw);
+    if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0) return value;
+    if (value.rfind("//", 0) == 0) return "https:" + value;
+    if (value.rfind("/", 0) == 0) return "https://" + kaa_host(base) + value;
+    return value;
+}
+
+static std::string kaa_signature_url(const std::string& serverUrl, const std::string& serverName,
+    const std::string& html)
+{
+    const size_t cidAt = html.find("cid: '");
+    if (cidAt == std::string::npos) return {};
+    const size_t cidStart = cidAt + 6;
+    const size_t cidEnd = html.find('\'', cidStart);
+    if (cidEnd == std::string::npos) return {};
+    const std::string cidHex = html.substr(cidStart, cidEnd - cidStart);
+    const std::string cidRaw = crypto::fromHex(cidHex);
+    const size_t sep = cidRaw.find('|');
+    if (sep == std::string::npos) return {};
+    const std::string ip = cidRaw.substr(0, sep);
+    const size_t routeStart = sep + 1;
+    const std::string playerRoute = cidRaw.substr(routeStart);
+    if (ip.empty() || playerRoute.empty()) return {};
+
+    const std::string route = replace_all(playerRoute, "player.php", "source.php");
+    const std::string mid = serverName == "DuckStream" ? "mid" : "id";
+    const std::string midValue = kaa_query_value(serverUrl, mid);
+    if (midValue.empty()) return {};
+
+    const std::string key =
+        serverName == "VidStreaming" ? "e13d38099bf562e8b9851a652d2043d3" :
+        serverName == "DuckStream" ? "4504447b74641ad972980a6b8ffd7631" :
+        serverName == "BirdStream" ? "4b14d0ff625163e3c9c7a47926484bf2" : "";
+    if (key.empty()) return {};
+
+    const std::string timestamp = std::to_string(static_cast<long long>(std::time(nullptr)) + 60);
+    std::string data = ip + "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36" + route + midValue;
+    if (serverName != "BirdStream") data += timestamp;
+    data += key;
+
+    std::string sourceUrl = "https://" + kaa_host(serverUrl) + route + "?" + mid + "=" + midValue;
+    if (serverName != "BirdStream") sourceUrl += "&e=" + timestamp;
+    sourceUrl += "&s=" + crypto::toHex(crypto::sha1(data));
+    return sourceUrl;
+}
+
+static std::vector<ProviderStream> kaa_hls_streams(const std::string& masterUrl, const std::string& serverName,
+    const std::string& referer, const std::string& playlist)
+{
+    std::vector<ProviderStream> out;
+    out.push_back({masterUrl, serverName + " - Auto", "HLS"});
+    size_t pos = 0;
+    while ((pos = playlist.find("#EXT-X-STREAM-INF", pos)) != std::string::npos)
+    {
+        const size_t lineEnd = playlist.find('\n', pos);
+        const std::string info = playlist.substr(pos, lineEnd == std::string::npos ? std::string::npos : lineEnd - pos);
+        const size_t next = lineEnd == std::string::npos ? playlist.size() : lineEnd + 1;
+        size_t u = next;
+        while (u < playlist.size() && (playlist[u] == '\r' || playlist[u] == '\n' || playlist[u] == ' ')) ++u;
+        const size_t uriEnd = playlist.find_first_of("\r\n", u);
+        if (u >= playlist.size()) break;
+        const std::string uri = playlist.substr(u, uriEnd == std::string::npos ? std::string::npos : uriEnd - u);
+        const size_t res = info.find("RESOLUTION=");
+        int height = 0;
+        if (res != std::string::npos)
+        {
+            const size_t x = info.find('x', res);
+            if (x != std::string::npos) height = std::atoi(info.c_str() + x + 1);
+        }
+        if (!uri.empty())
+        {
+            ProviderStream item;
+            item.url = kaa_fix_url(uri, masterUrl);
+            item.quality = serverName + " - " + (height > 0 ? std::to_string(height) + "p" : "Video");
+            item.type = "HLS";
+            out.push_back(std::move(item));
+        }
+        pos = next;
+    }
+    return out;
+}
+
+static std::vector<ProviderStream> kaa_extract_server(const std::string& serverUrl,
+    const std::string& serverName, std::string& status)
+{
+    static constexpr const char* kVideoUA =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+    std::vector<std::string> pageHeaders = {
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    };
+    std::string html;
+    if (!http_request(serverUrl, nullptr, html, 25, nullptr, kVideoUA, &pageHeaders))
+    {
+        log_stage(("KAA EXTRACT PAGE FAILED server=" + serverName).c_str());
+        return {};
+    }
+    log_stage(("KAA EXTRACT PAGE OK server=" + serverName + " bytes=" + std::to_string(html.size())).c_str());
+
+    // New Astro-style KAA player: the page embeds manifest:[0,"//..."].
+    std::string clean = replace_all(html, "&quot;", "\"");
+    const std::string manifestMarker = "manifest":[0,"";
+    const size_t manifestAt = clean.find(manifestMarker);
+    if (manifestAt != std::string::npos)
+    {
+        size_t p = manifestAt + manifestMarker.size();
+        size_t e = clean.find('"', p);
+        if (e != std::string::npos)
+        {
+            const std::string manifest = kaa_fix_url(clean.substr(p, e - p), serverUrl);
+            std::vector<std::string> h = {
+                "Accept: */*",
+                "Referer: " + serverUrl,
+                "Origin: https://" + kaa_host(serverUrl)
+            };
+            std::string playlist;
+            if (http_request(manifest, nullptr, playlist, 25, nullptr, kVideoUA, &h))
+            {
+                log_stage(("KAA EXTRACT MANIFEST OK server=" + serverName + " bytes=" + std::to_string(playlist.size())).c_str());
+                return kaa_hls_streams(manifest, serverName, serverUrl, playlist);
+            }
+            return {{manifest, serverName + " - Auto", "HLS"}};
+        }
+    }
+
+    const std::string sourceUrl = kaa_signature_url(serverUrl, serverName, html);
+    if (sourceUrl.empty())
+    {
+        log_stage(("KAA EXTRACT UNSUPPORTED server=" + serverName).c_str());
+        return {};
+    }
+
+    std::vector<std::string> sourceHeaders = {
+        "Accept: */*",
+        "Referer: " + serverUrl,
+        "Origin: https://" + kaa_host(serverUrl)
+    };
+    std::string response;
+    if (!http_request(sourceUrl, nullptr, response, 25, nullptr, kVideoUA, &sourceHeaders))
+    {
+        log_stage(("KAA EXTRACT SOURCE FAILED server=" + serverName).c_str());
+        return {};
+    }
+    log_stage(("KAA EXTRACT SOURCE OK server=" + serverName + " bytes=" + std::to_string(response.size())).c_str());
+
+    const size_t q = response.find(":\"");
+    if (q == std::string::npos) return {};
+    const size_t valueStart = q + 2;
+    const size_t valueEnd = response.find("\"", valueStart);
+    if (valueEnd == std::string::npos) return {};
+    std::string payload = response.substr(valueStart, valueEnd - valueStart);
+    payload = replace_all(payload, "\\\\", "\\");
+    const size_t colon = payload.find(':');
+    if (colon == std::string::npos) return {};
+    const std::string encrypted = payload.substr(0, colon);
+    const std::string ivHex = payload.substr(colon + 1);
+    try
+    {
+        const std::string decrypted = crypto::aesCbcDecrypt(
+            crypto::base64Decode(encrypted), 
+            serverName == "VidStreaming" ? "e13d38099bf562e8b9851a652d2043d3" :
+            serverName == "DuckStream" ? "4504447b74641ad972980a6b8ffd7631" :
+            "4b14d0ff625163e3c9c7a47926484bf2",
+            crypto::fromHex(ivHex));
+        const std::string hls = json_string_field(decrypted, "hls");
+        const std::string dash = json_string_field(decrypted, "dash");
+        const std::string playlistUrl = kaa_fix_url(hls.empty() ? dash : hls, serverUrl);
+        if (playlistUrl.empty()) return {};
+        log_stage(("KAA EXTRACT DECRYPTED stream=" + (hls.empty() ? dash : hls)).c_str());
+        if (!hls.empty())
+        {
+            std::vector<std::string> ph = {"Accept: */*", "Referer: " + serverUrl,
+                "Origin: https://" + kaa_host(serverUrl)};
+            std::string playlist;
+            if (http_request(playlistUrl, nullptr, playlist, 25, nullptr, kVideoUA, &ph))
+                return kaa_hls_streams(playlistUrl, serverName, serverUrl, playlist);
+        }
+        return {{playlistUrl, serverName + " - Auto", hls.empty() ? "DASH" : "HLS"}};
+    }
+    catch (const std::exception&)
+    {
+        log_stage(("KAA EXTRACT DECRYPT FAILED server=" + serverName).c_str());
+        return {};
+    }
+}
+
 static std::vector<ProviderStream> fetch_kaa_sources(
     const ProviderEpisode& episode, std::string& status)
 {
@@ -1255,13 +1483,30 @@ static std::vector<ProviderStream> fetch_kaa_sources(
         log_stage(("KAA SOURCE FOUND name=" + name).c_str());
     }
 
-    status = "KickAssAnime returned " + std::to_string(sources.size()) +
-        " source(s).";
+    if (sources.empty())
+    {
+        status = "KickAssAnime returned no usable source servers.";
+        return {};
+    }
+
+    std::vector<ProviderStream> resolved;
+    for (const ProviderStream& source : sources)
+    {
+        log_stage(("KAA EXTRACT START server=" + source.quality).c_str());
+        std::vector<ProviderStream> videos = kaa_extract_server(source.url, source.quality, status);
+        resolved.insert(resolved.end(), videos.begin(), videos.end());
+        if (!videos.empty())
+            log_stage(("KAA EXTRACT READY server=" + source.quality + " count=" + std::to_string(videos.size())).c_str());
+    }
+
+    status = resolved.empty()
+        ? "KickAssAnime found servers, but could not extract a playable stream."
+        : "KickAssAnime extracted " + std::to_string(resolved.size()) + " playable stream option(s).";
     char marker[128];
     std::snprintf(marker, sizeof(marker),
-        "KAA SOURCES FINAL count=%zu", sources.size());
+        "KAA STREAMS FINAL count=%zu", resolved.size());
     log_stage(marker);
-    return sources;
+    return resolved;
 }
 
 static std::vector<ProviderStream> parse_miruro_streams(const std::string& json)
