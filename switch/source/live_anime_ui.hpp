@@ -1514,8 +1514,27 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
                         const std::string pages = json_array_field(response, "pages");
                         if (!pages.empty())
                         {
-                            const int discovered = static_cast<int>(
-                                std::count(pages.begin(), pages.end(), '{'));
+                            // KAA's \`pages\` field is an array; AnikkuNX uses
+                            // its element count as the number of episode pages.
+                            int discovered = 1;
+                            int depth = 0;
+                            bool inString = false;
+                            bool escaped = false;
+                            for (size_t pi = 1; pi + 1 < pages.size(); ++pi)
+                            {
+                                const char ch = pages[pi];
+                                if (inString)
+                                {
+                                    if (escaped) escaped = false;
+                                    else if (ch == '\\\\') escaped = true;
+                                    else if (ch == '"') inString = false;
+                                    continue;
+                                }
+                                if (ch == '"') inString = true;
+                                else if (ch == '[' || ch == '{') ++depth;
+                                else if (ch == ']' || ch == '}') --depth;
+                                else if (ch == ',' && depth == 0) ++discovered;
+                            }
                             if (discovered > 0) pageCount = discovered;
                         }
                     }
