@@ -2637,7 +2637,6 @@ public:
         sourceViewport->setWidthPercentage(100.0f);
         sourceViewport->setHeight(58.0f);
         sourceViewport->setMargins(0, 0, 0, 0);
-        sourceViewport->setClipping(true);
 
         brls::Box* sources = new brls::Box(brls::Axis::ROW);
         sources->setWidth(1160.0f + static_cast<float>(kApiSourceCount) * 185.0f);
