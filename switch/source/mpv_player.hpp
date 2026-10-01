@@ -1,6 +1,8 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <mpv/client.h>
+#include <mpv/render_gl.h>
 #include <string>
 
 class SaikouMpvVideoView : public brls::View
