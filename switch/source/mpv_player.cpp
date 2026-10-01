@@ -6,7 +6,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-#include <cstdio>
+#include <utility>
 #include <vector>
 
 static void* saikou_mpv_get_proc_address(void*, const char* name)
@@ -79,7 +79,7 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url)
         m_status = std::string("Could not open stream: ") + mpv_error_string(loadResult);
         brls::Logger::error("mpv loadfile failed: {}", mpv_error_string(loadResult));
     }
-    brls::Logger::info("Starting native playback: {}", url);
+    brls::Logger::info("Starting native playback");
 }
 
 SaikouMpvVideoView::~SaikouMpvVideoView()
@@ -158,12 +158,7 @@ void SaikouMpvVideoView::draw(NVGcontext* vg, float x, float y, float width,
             {MPV_RENDER_PARAM_FLIP_Y, &flipY},
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
-        const int result = mpv_render_context_render(m_render, params);
-        if (result < 0)
-        {
-            m_status = std::string("Video render error: ") + mpv_error_string(result);
-            brls::Logger::error("mpv render failed: {}", m_status);
-        }
+        mpv_render_context_render(m_render, params);
         glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFramebuffer);
         glViewport(0, 0, framebufferWidth, framebufferHeight);
         mpv_render_context_report_swap(m_render);
