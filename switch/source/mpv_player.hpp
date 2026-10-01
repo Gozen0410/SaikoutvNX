@@ -18,11 +18,21 @@ public:
 
 private:
     void handleEvents();
+    bool ensureTarget(NVGcontext* vg, int width, int height);
+    void releaseTarget(NVGcontext* vg);
 
     mpv_handle* m_mpv = nullptr;
     mpv_render_context* m_render = nullptr;
-    int m_defaultFramebuffer = 0;
     std::vector<std::string> m_headers;
+    NVGcontext* m_vg = nullptr;
+    unsigned int m_fbo = 0;
+    unsigned int m_texture = 0;
+    int m_nvgImage = -1;
+    int m_targetWidth = 0;
+    int m_targetHeight = 0;
+    int m_videoWidth = 0;
+    int m_videoHeight = 0;
+    bool m_framePending = true;
     std::string m_status = "Connecting to stream...";
 };
 
