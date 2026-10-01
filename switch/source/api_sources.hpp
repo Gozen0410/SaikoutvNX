@@ -1,3 +1,4 @@
+// Build-test marker: backend API changes are tested by their deployed services.
 #pragma once
 
 #include <cstddef>
