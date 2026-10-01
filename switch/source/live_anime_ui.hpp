@@ -1213,7 +1213,7 @@ static std::vector<ProviderStream> fetch_kaa_sources(
     }
 
     const std::string route =
-        "https://kaa.lt/api/show/" + episode.provider + episodePath;
+        "https://kaa.lt/api/show" + episodePath;
     std::string response;
 
     log_stage(("KAA SOURCE REQUEST route=" + route).c_str());
