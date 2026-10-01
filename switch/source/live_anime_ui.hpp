@@ -965,6 +965,7 @@ struct ProviderStream
     std::string url;
     std::string quality;
     std::string type;
+    std::vector<std::string> headers;
 };
 
 static std::string encode_url_component(const std::string& input)
@@ -1292,7 +1293,7 @@ static std::vector<ProviderStream> kaa_hls_streams(const std::string& masterUrl,
     const std::string& referer, const std::string& playlist)
 {
     std::vector<ProviderStream> out;
-    out.push_back({masterUrl, serverName + " - Auto", "HLS"});
+    out.push_back({masterUrl, serverName + " - Auto", "HLS", {"Referer: " + referer, "Origin: https://" + kaa_host(referer)}});
     size_t pos = 0;
     while ((pos = playlist.find("#EXT-X-STREAM-INF", pos)) != std::string::npos)
     {
@@ -1317,6 +1318,7 @@ static std::vector<ProviderStream> kaa_hls_streams(const std::string& masterUrl,
             item.url = kaa_fix_url(uri, masterUrl);
             item.quality = serverName + " - " + (height > 0 ? std::to_string(height) + "p" : "Video");
             item.type = "HLS";
+            item.headers = {"Referer: " + referer, "Origin: https://" + kaa_host(referer)};
             out.push_back(std::move(item));
         }
         pos = next;
@@ -1363,7 +1365,7 @@ static std::vector<ProviderStream> kaa_extract_server(const std::string& serverU
                 log_stage(("KAA EXTRACT MANIFEST OK server=" + serverName + " bytes=" + std::to_string(playlist.size())).c_str());
                 return kaa_hls_streams(manifest, serverName, serverUrl, playlist);
             }
-            return {{manifest, serverName + " - Auto", "HLS"}};
+            return {{manifest, serverName + " - Auto", "HLS", {"Referer: " + serverUrl, "Origin: https://" + kaa_host(serverUrl)}}};
         }
     }
 
@@ -1419,7 +1421,7 @@ static std::vector<ProviderStream> kaa_extract_server(const std::string& serverU
             if (http_request(playlistUrl, nullptr, playlist, 25, nullptr, kVideoUA, &ph))
                 return kaa_hls_streams(playlistUrl, serverName, serverUrl, playlist);
         }
-        return {{playlistUrl, serverName + " - Auto", hls.empty() ? "DASH" : "HLS"}};
+        return {{playlistUrl, serverName + " - Auto", hls.empty() ? "DASH" : "HLS", {"Referer: " + serverUrl, "Origin: https://" + kaa_host(serverUrl)}}};
     }
     catch (const std::exception&)
     {
@@ -2157,7 +2159,8 @@ public:
                             m_anime.title,
                             m_providerEpisode.title,
                             label,
-                            selected.url),
+                            selected.url,
+                            selected.headers),
                         brls::TransitionAnimation::NONE);
                     return true;
                 });
