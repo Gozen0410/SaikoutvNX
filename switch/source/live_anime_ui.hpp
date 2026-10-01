@@ -1200,8 +1200,20 @@ static std::vector<ProviderStream> fetch_kaa_sources(
     // AnikkuNX's native KAA flow:
     // /api/show/{anime-slug}/episode/ep-{number}-{slug}
     // returns { "servers": [ { "name": ..., "src": ... }, ... ] }.
+    // AnikkuNX's actual KAA video endpoint inserts /episode before /ep-*.
+    // episode.id is the episode path returned by /episodes (e.g. /ep-1-5d81fc).
+    std::string episodePath = episode.id;
+    if (episodePath.rfind("/episode/", 0) != 0)
+    {
+        const size_t ep = episodePath.find("/ep-");
+        if (ep != std::string::npos)
+            episodePath.insert(ep, "/episode");
+        else if (episodePath.rfind("ep-", 0) == 0)
+            episodePath = "/episode/" + episodePath;
+    }
+
     const std::string route =
-        "https://kaa.lt/api/show" + episode.id;
+        "https://kaa.lt/api/show/" + episode.provider + episodePath;
     std::string response;
 
     log_stage(("KAA SOURCE REQUEST route=" + route).c_str());
