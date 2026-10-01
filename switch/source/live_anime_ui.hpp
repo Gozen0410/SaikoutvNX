@@ -1526,7 +1526,7 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
                                 if (inString)
                                 {
                                     if (escaped) escaped = false;
-                                    else if (ch == '\\\\') escaped = true;
+                                    else if (ch == '\\') escaped = true;
                                     else if (ch == '"') inString = false;
                                     continue;
                                 }
