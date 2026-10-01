@@ -38,7 +38,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${BOREALIS_LIBRARY}/include/borealis/extern
     ${BOREALIS_LIBRARY}/lib/extern/glfw/include
-    ${BOREALIS_LIBRARY}/lib/extern/glfw/deps)
+    ${BOREALIS_LIBRARY}/lib/extern/glfw/deps
+    ${APP_PLATFORM_INCLUDE})
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     -ffunction-sections
