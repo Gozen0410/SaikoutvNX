@@ -45,8 +45,6 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url)
     mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
     mpv_set_option_string(m_mpv, "opengl-glfinish", "yes");
 #endif
-    mpv_request_log_messages(m_mpv, "info");
-
     const int initResult = mpv_initialize(m_mpv);
     if (initResult < 0)
     {
@@ -128,13 +126,6 @@ void SaikouMpvVideoView::handleEvents()
                 {
                     m_status = "Stream ended  |  B back";
                 }
-                break;
-            }
-            case MPV_EVENT_LOG_MESSAGE:
-            {
-                auto* message = static_cast<mpv_event_log_message*>(event->data);
-                if (message)
-                    brls::Logger::debug("[mpv/{}] {}", message->prefix, message->text);
                 break;
             }
             default:
@@ -230,5 +221,10 @@ brls::View* SaikouMpvPlayerActivity::createContentView()
     controls->setMargins(0, 9, 0, 0);
     controls->setFocusable(false);
     root->addView(controls);
+
+    // Keep the activity itself focused so A/B actions work even though the
+    // full-screen video surface and its explanatory labels are not focusable.
+    root->setFocusable(true);
+    brls::Application::giveFocus(root);
     return root;
 }
