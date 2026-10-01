@@ -11,7 +11,7 @@
 
 namespace crypto {
 
-std::string base64Decode(const std::string& data, bool urlSafe = false);
+std::string base64Decode(const std::string& data, bool urlSafe);
 
 // ============================================================================ MD5
 namespace {
