@@ -1418,7 +1418,7 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
             {
                 const std::string searchUrl = std::string(kKaaBase) + "/api/fsearch";
                 const std::string body =
-                    std::string("{"page":1,"query":") + json_quote(title) + "}";
+                    std::string("{\"page\":1,\"query\":") + json_quote(title) + "}";
                 log_stage(("KAA SEARCH title=" + title).c_str());
 
                 if (!http_request(searchUrl, &body, response, 20))
