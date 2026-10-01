@@ -1461,8 +1461,8 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
                     std::string(kKaaBase) + "/api/show/" + encode_url_component(slug) + "/language";
                 if (http_request(languageUrl, nullptr, response, 20))
                 {
-                    const bool hasJapanese = response.find(""ja-JP"") != std::string::npos;
-                    const bool hasEnglish = response.find(""en-US"") != std::string::npos;
+                    const bool hasJapanese = response.find("\\"ja-JP\\"") != std::string::npos;
+                    const bool hasEnglish = response.find("\\"en-US\\"") != std::string::npos;
                     if (hasJapanese)
                         lang = "ja-JP";
                     else if (hasEnglish)
