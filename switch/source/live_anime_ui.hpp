@@ -6,6 +6,7 @@
 #include <switch/services/nifm.h>
 #include <switch.h>
 #include "api_sources.hpp"
+#include "mpv_player.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1581,7 +1582,7 @@ public:
 
         brls::Label* playerStatus = new brls::Label();
         playerStatus->setText(
-            "Stream choices come from the scraper. Video playback is a separate integration step.");
+            "Select a stream with A to start native playback. Press B to return.");
         playerStatus->setFontSize(14.0f);
         playerStatus->setTextColor(nvgRGB(135, 147, 166));
         playerStatus->setMargins(0, 18, 0, 0);
@@ -1616,21 +1617,18 @@ public:
                 (stream.quality.empty() ? std::string("Stream") : stream.quality) +
                 (stream.type.empty() ? std::string() : "  " + stream.type);
             brls::Box* choice = make_option(label, i == m_selectedStream);
-            choice->registerAction("Select scraper stream option", brls::BUTTON_A,
+            choice->registerAction("Play scraper stream option", brls::BUTTON_A,
                 [this, i, label](brls::View*) {
                     m_selectedStream = i;
-                    if (m_sourceStatus)
-                        m_sourceStatus->setText("Selected " + label +
-                            ". A Switch video playback backend is still needed.");
-                    for (size_t j = 0; j < m_streamChoices.size(); ++j)
-                    {
-                        const bool selected = j == m_selectedStream;
-                        m_streamChoices[j]->setBackgroundColor(
-                            selected ? nvgRGB(31, 64, 79) : nvgRGB(27, 34, 48));
-                        m_streamChoices[j]->setBorderColor(
-                            selected ? nvgRGB(67, 190, 218) : nvgRGB(48, 57, 74));
-                        m_streamChoices[j]->setBorderThickness(selected ? 2.0f : 1.0f);
-                    }
+                    const ProviderStream& selected = m_streams[m_selectedStream];
+                    log_stage("NATIVE PLAYER OPEN: selected scraper stream");
+                    brls::Application::pushActivity(
+                        new SaikouMpvPlayerActivity(
+                            m_anime.title,
+                            m_providerEpisode.title,
+                            label,
+                            selected.url),
+                        brls::TransitionAnimation::NONE);
                     return true;
                 });
             m_streamChoices.push_back(choice);
