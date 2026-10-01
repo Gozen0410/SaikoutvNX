@@ -2628,7 +2628,17 @@ public:
         sourcesHeading->setMargins(0, 12, 0, 4);
         root->addView(sourcesHeading);
 
+        // Keep all enabled providers reachable without pushing the row off the
+        // 1280px Switch viewport. The row itself can grow horizontally and the
+        // ScrollingFrame handles focus/navigation across the complete provider set.
+        brls::ScrollingFrame* sourceScroll = new brls::ScrollingFrame();
+        sourceScroll->setWidthPercentage(100.0f);
+        sourceScroll->setHeight(58.0f);
+        sourceScroll->setMargins(0, 0, 0, 0);
+        sourceScroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+
         brls::Box* sources = new brls::Box(brls::Axis::ROW);
+        sources->setWidth(1160.0f + static_cast<float>(kApiSourceCount) * 185.0f);
         sources->setHeight(46.0f);
         for (size_t i = 0; i < kApiSourceCount; ++i)
         {
@@ -2645,7 +2655,8 @@ public:
             empty->setTextColor(nvgRGB(174, 184, 200));
             sources->addView(empty);
         }
-        root->addView(sources);
+        sourceScroll->setContentView(sources);
+        root->addView(sourceScroll);
 
         m_sourceStatus = new brls::Label();
         m_sourceStatus->setFontSize(14.0f);
