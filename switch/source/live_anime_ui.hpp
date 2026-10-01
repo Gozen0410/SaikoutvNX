@@ -2152,7 +2152,9 @@ public:
         root->addView(playerStatus);
 
         if (m_sourceId == static_cast<int>(ApiSourceId::Miruro) ||
-            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
+            m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime) ||
+            (m_sourceId >= static_cast<int>(ApiSourceId::Anichi) &&
+             m_sourceId <= static_cast<int>(ApiSourceId::AnimeKai)))
             start_load();
         brls::Application::giveFocus(m_focusSink);
         return root;
