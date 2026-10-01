@@ -878,10 +878,12 @@ static bool download_image(const std::string& url, const std::string& path)
 
 static void initialize_source_settings()
 {
+    // These are scraper API server roots, not provider website domains.
+    // The combined Anime-API deployment documents these public API roots.
     static const char* kDefaultApiRoots[kApiSourceCount] =
     {
-        "https://api-anime-rouge.vercel.app",
-        "https://animescraper.vercel.app",
+        "",
+        "",
         "https://api-anime-rouge.vercel.app",
         "https://api-anime-rouge.vercel.app",
         "https://api-anime-rouge.vercel.app",
