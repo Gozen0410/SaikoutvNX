@@ -32,6 +32,18 @@
 #include <unistd.h>
 
 static void log_stage(const char* stage);
+static std::string replace_all(std::string value, const std::string& from, const std::string& to)
+{
+    if (from.empty()) return value;
+    size_t pos = 0;
+    while ((pos = value.find(from, pos)) != std::string::npos)
+    {
+        value.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return value;
+}
+
 
 static const auto g_perfStart = std::chrono::steady_clock::now();
 
@@ -1331,7 +1343,7 @@ static std::vector<ProviderStream> kaa_extract_server(const std::string& serverU
 
     // New Astro-style KAA player: the page embeds manifest:[0,"//..."].
     std::string clean = replace_all(html, "&quot;", "\"");
-    const std::string manifestMarker = "manifest":[0,"";
+    const std::string manifestMarker = "manifest\\":[0,\\\"";
     const size_t manifestAt = clean.find(manifestMarker);
     if (manifestAt != std::string::npos)
     {
