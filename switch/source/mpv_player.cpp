@@ -14,7 +14,8 @@ static void* saikou_mpv_get_proc_address(void*, const char* name)
     return reinterpret_cast<void*>(glfwGetProcAddress(name));
 }
 
-SaikouMpvVideoView::SaikouMpvVideoView(std::string url)
+SaikouMpvVideoView::SaikouMpvVideoView(std::string url, std::vector<std::string> headers)
+    : m_headers(std::move(headers))
 {
     setFocusable(false);
     m_mpv = mpv_create();
@@ -40,6 +41,22 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url)
     mpv_set_option_string(m_mpv, "hwdec", "auto");
     // Some anime CDNs use image-like file extensions for HLS segments.
     mpv_set_option_string(m_mpv, "demuxer-lavf-o", "extension_picky=0");
+    // KAA CDNs validate the page that produced the HLS URL. These headers must
+    // follow libmpv into both the master/variant playlists and media segments.
+    mpv_set_option_string(m_mpv, "http-user-agent",
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36");
+    if (!m_headers.empty())
+    {
+        std::string fields;
+        for (size_t i = 0; i < m_headers.size(); ++i)
+        {
+            if (i) fields += ",";
+            fields += m_headers[i];
+        }
+        mpv_set_option_string(m_mpv, "http-header-fields", fields.c_str());
+        brls::Logger::info("mpv stream headers configured count={}", m_headers.size());
+    }
 #ifdef __SWITCH__
     mpv_set_option_string(m_mpv, "vd-lavc-dr", "no");
     mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
@@ -168,11 +185,13 @@ void SaikouMpvVideoView::draw(NVGcontext* vg, float x, float y, float width,
 }
 
 SaikouMpvPlayerActivity::SaikouMpvPlayerActivity(
-    std::string animeTitle, std::string episodeTitle, std::string streamLabel, std::string url)
+    std::string animeTitle, std::string episodeTitle, std::string streamLabel, std::string url,
+    std::vector<std::string> headers)
     : m_animeTitle(std::move(animeTitle)),
       m_episodeTitle(std::move(episodeTitle)),
       m_streamLabel(std::move(streamLabel)),
-      m_url(std::move(url))
+      m_url(std::move(url)),
+      m_headers(std::move(headers))
 {
 }
 
@@ -208,7 +227,7 @@ brls::View* SaikouMpvPlayerActivity::createContentView()
     episode->setMargins(0, 4, 0, 0);
     root->addView(episode);
 
-    m_video = new SaikouMpvVideoView(m_url);
+    m_video = new SaikouMpvVideoView(m_url, m_headers);
     m_video->setWidthPercentage(100.0f);
     m_video->setGrow(1.0f);
     m_video->setMargins(0, 12, 0, 0);
