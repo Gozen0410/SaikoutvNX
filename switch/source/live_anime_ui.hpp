@@ -1267,7 +1267,8 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
     }
     const std::string base = trim_api_base(g_providerBaseUrl[sourceId]);
     const std::string fallback = trim_api_base(g_providerFallbackBaseUrl[sourceId]);
-    if (base.empty() && fallback.empty())
+    if (base.empty() && fallback.empty() &&
+        static_cast<ApiSourceId>(sourceId) != ApiSourceId::KickAssAnime)
     {
         status = std::string(kApiSources[sourceId].name) +
             " scraper API address is missing. Add a deployed API root in Settings.";
