@@ -160,7 +160,8 @@ static size_t append_http_data(char* data, size_t size, size_t count, void* user
 }
 
 static bool http_request(const std::string& url, const std::string* postBody,
-    std::string& response, long timeoutSeconds = 10, const std::string* bearerToken = nullptr)
+    std::string& response, long timeoutSeconds = 10, const std::string* bearerToken = nullptr,
+    const char* userAgent = nullptr)
 {
     if (!ensure_network_ready() || !ensure_curl_ready())
         return false;
@@ -190,7 +191,8 @@ static bool http_request(const std::string& url, const std::string* postBody,
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "SaikouTV-NX/0.3");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT,
+            (userAgent && *userAgent) ? userAgent : "SaikouTV-NX/0.3");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, append_http_data);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
@@ -1203,9 +1205,13 @@ static std::vector<ProviderStream> fetch_kaa_sources(
     std::string response;
 
     log_stage(("KAA SOURCE REQUEST route=" + route).c_str());
-    if (!http_request(route, nullptr, response, 25))
+    static constexpr const char* kKaaBrowserUA =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+
+    if (!http_request(route, nullptr, response, 25, nullptr, kKaaBrowserUA))
     {
-        status = "KickAssAnime source request failed.";
+        status = "KickAssAnime source request failed (see HTTP log).";
         log_stage("KAA SOURCE REQUEST FAILED");
         return {};
     }
@@ -1217,6 +1223,7 @@ static std::vector<ProviderStream> fetch_kaa_sources(
         log_stage("KAA SOURCE RESPONSE HAD NO SERVERS");
         return {};
     }
+    log_stage(("KAA SOURCE RESPONSE bytes=" + std::to_string(response.size())).c_str());
 
     std::vector<ProviderStream> sources;
     for (const std::string& object : json_object_array(servers))
@@ -1813,6 +1820,14 @@ public:
         }
         root->addView(m_sourceStatus);
 
+        // While source extraction runs, trap focus inside this activity.
+        m_focusSink = new brls::Padding();
+        m_focusSink->setWidth(1.0f);
+        m_focusSink->setHeight(1.0f);
+        m_focusSink->alpha = 0.0f;
+        m_focusSink->setFocusable(true);
+        root->addView(m_focusSink);
+
         m_streamRow = new brls::Box(brls::Axis::ROW);
         m_streamRow->setWidthPercentage(100.0f);
         m_streamRow->setHeight(70.0f);
@@ -1831,6 +1846,7 @@ public:
         if (m_sourceId == static_cast<int>(ApiSourceId::Miruro) ||
             m_sourceId == static_cast<int>(ApiSourceId::KickAssAnime))
             start_load();
+        brls::Application::giveFocus(m_focusSink);
         return root;
     }
 
@@ -1844,11 +1860,16 @@ public:
         m_streamChoices.clear();
         if (m_streams.empty())
         {
-            brls::Box* empty = make_option("No streams returned", false);
-            empty->setFocusable(false);
-            m_streamRow->addView(empty);
+            // Do not render an unfocusable fake button. The status label above is the
+            // authoritative result of extraction, and the invisible sink keeps focus
+            // from leaking back into the episode list underneath.
+            if (m_focusSink)
+                m_focusSink->setFocusable(true);
             return;
         }
+
+        if (m_focusSink)
+            m_focusSink->setFocusable(false);
 
         for (size_t i = 0; i < m_streams.size(); ++i)
         {
@@ -1888,6 +1909,7 @@ private:
     std::vector<brls::Box*> m_streamChoices;
     std::vector<ProviderStream> m_streams;
     std::string m_statusText;
+    brls::Padding* m_focusSink = nullptr;
     std::thread m_worker;
     std::atomic<bool> m_ready{ false };
     std::shared_ptr<std::atomic<bool>> m_lifetime =
@@ -1983,6 +2005,15 @@ public:
         m_status->setFocusable(false);
         m_content->addView(m_status);
 
+        // Keep focus inside this activity while the async provider request is running.
+        // Otherwise Borealis can fall back to the previous activity's focused provider buttons.
+        m_focusSink = new brls::Padding();
+        m_focusSink->setWidth(1.0f);
+        m_focusSink->setHeight(1.0f);
+        m_focusSink->alpha = 0.0f;
+        m_focusSink->setFocusable(true);
+        m_content->addView(m_focusSink);
+
         m_scroll = new brls::ScrollingFrame();
         m_scroll->setWidthPercentage(100.0f);
         m_scroll->setGrow(1.0f);
@@ -1996,6 +2027,7 @@ public:
 
         m_status->setText("Loading episode list from " + std::string(api_source_name(m_sourceId)) + "...");
         start_load();
+        brls::Application::giveFocus(m_focusSink);
         return m_content;
     }
 
@@ -2008,6 +2040,8 @@ public:
         if (m_status) m_status->setText(m_statusText);
 
         clear_box(m_rows);
+        if (m_focusSink)
+            m_focusSink->setFocusable(false);
         if (m_episodes.empty())
         {
             brls::Box* back = new brls::Box(brls::Axis::ROW);
@@ -2124,6 +2158,7 @@ private:
         std::make_shared<std::atomic<bool>>(true);
     std::vector<ProviderEpisode> m_episodes;
     std::string m_statusText;
+    brls::Padding* m_focusSink = nullptr;
 
     void start_load()
     {
