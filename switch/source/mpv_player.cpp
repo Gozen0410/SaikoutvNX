@@ -6,6 +6,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <atomic>
 #include <utility>
 #include <vector>
 
@@ -13,6 +14,30 @@ static void* saikou_mpv_get_proc_address(void*, const char* name)
 {
     return reinterpret_cast<void*>(glfwGetProcAddress(name));
 }
+
+extern "C"
+{
+    int nvglCreateImageFromHandleGL3(NVGcontext* ctx, unsigned int texture, int w, int h, int flags);
+    int nvglCreateImageFromHandleGLES3(NVGcontext* ctx, unsigned int texture, int w, int h, int flags);
+}
+
+#ifdef USE_GLES
+#define nvglCreateImageFromHandle nvglCreateImageFromHandleGLES3
+#else
+#define nvglCreateImageFromHandle nvglCreateImageFromHandleGL3
+#endif
+
+namespace
+{
+constexpr int kNvgImageNoDelete = 1 << 16;
+std::atomic<bool> gFramePending{true};
+
+void onMpvRenderUpdate(void*)
+{
+    gFramePending.store(true, std::memory_order_release);
+}
+}
+
 
 SaikouMpvVideoView::SaikouMpvVideoView(std::string url, std::vector<std::string> headers)
     : m_headers(std::move(headers))
@@ -86,6 +111,11 @@ SaikouMpvVideoView::SaikouMpvVideoView(std::string url, std::vector<std::string>
         brls::Logger::error("mpv_render_context_create failed: {}", mpv_error_string(renderResult));
         return;
     }
+
+    mpv_render_context_set_update_callback(m_render, onMpvRenderUpdate, nullptr);
+    mpv_request_log_messages(m_mpv, "warn");
+    mpv_observe_property(m_mpv, 0, "dwidth", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, 0, "dheight", MPV_FORMAT_INT64);
 
     std::vector<const char*> command = {"loadfile", url.c_str(), "replace", nullptr};
     const int loadResult = mpv_command_async(m_mpv, 0, command.data());
