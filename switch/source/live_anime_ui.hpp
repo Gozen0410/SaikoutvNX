@@ -1247,7 +1247,9 @@ static std::string kaa_fix_url(const std::string& raw, const std::string& base)
     if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0) return value;
     if (value.rfind("//", 0) == 0) return "https:" + value;
     if (value.rfind("/", 0) == 0) return "https://" + kaa_host(base) + value;
-    return value;
+    // HLS variant URIs are commonly relative to the master playlist. Leaving
+    // them unchanged makes Auto work while every explicit quality is invalid.
+    return anikoto::detail::resolve_url(base, value);
 }
 
 static std::string kaa_signature_url(const std::string& serverUrl, const std::string& serverName,
@@ -1606,8 +1608,11 @@ static std::vector<ProviderEpisode> fetch_provider_episodes(
     }
     const std::string base = trim_api_base(g_providerBaseUrl[sourceId]);
     const std::string fallback = trim_api_base(g_providerFallbackBaseUrl[sourceId]);
+    const ApiSourceId source = static_cast<ApiSourceId>(sourceId);
+    const bool usesDirectWebsiteScraper =
+        source >= ApiSourceId::Anichi && source <= ApiSourceId::AnimeKai;
     if (base.empty() && fallback.empty() &&
-        static_cast<ApiSourceId>(sourceId) != ApiSourceId::KickAssAnime)
+        source != ApiSourceId::KickAssAnime && !usesDirectWebsiteScraper)
     {
         status = std::string(kApiSources[sourceId].name) +
             " scraper API address is missing. Add a deployed API root in Settings.";
